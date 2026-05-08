@@ -10,9 +10,9 @@ from dotenv import load_dotenv
 # --------------------------
 # ✅ YOUR SETTINGS — EDIT THESE
 # --------------------------
-PLACE_ID = "123456789"          # Replace with YOUR Game ID
-BOSS_WEBHOOK = "https://discord.com/api/webhooks/..."
-RIFT_WEBHOOK = "https://discord.com/api/webhooks/..."
+PLACE_ID = "YOUR_ROBLOX_PLACE_ID"          # Replace with YOUR Game ID
+BOSS_WEBHOOK = "YOUR_BOSS_WEBHOOK_URL"
+RIFT_WEBHOOK = "YOUR_RIFT_WEBHOOK_URL"
 SCAN_INTERVAL = 60               # Check every 60 seconds
 BOSS_CYCLE = 7200                # 2 Hours = 7200s
 RIFT_CYCLE = 5400                # 1 Hour 30 Mins = 5400s
@@ -192,4 +192,4 @@ class RobloxAutoTracker(commands.Bot):
         self.alerts_sent[jid].append(alert_id)
 
 bot = RobloxAutoTracker()
-bot.run(os.getenv("DISCORD_TOKEN"))
+bot.run(os.getenv("BOT_TOKEN"))
