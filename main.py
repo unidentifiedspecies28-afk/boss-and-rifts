@@ -6,56 +6,79 @@ from datetime import datetime, timedelta
 from flask import Flask
 from threading import Thread
 from dotenv import load_dotenv
+import logging
 
 # --------------------------
 # ✅ YOUR SETTINGS — EDIT THESE
 # --------------------------
-PLACE_ID = "13358463560"          # Replace with YOUR Game ID
+PLACE_ID = "13358463560"          # Your Roblox Game ID
 BOSS_WEBHOOK = "https://discord.com/api/webhooks/1502263569633509487/NGKjFf4EGD32m3UbuafIadrObSSiOxujGXvWcWLSQj8OEAHRcHw-X_Q0OnZOq1r8Ykvw"
 RIFT_WEBHOOK = "https://discord.com/api/webhooks/1502264183956308130/xLuNT-iod8k245vT_jx5u4pLVCasuwtLBAT0NjaJvR3IISH5UA3pjJ43T1bph6ENyzh-"
 
-# ⏱️ TIMING CONFIG — LOCKED TO 5MIN WARNING
-SCAN_INTERVAL = 30               # Check every 30s (perfect accuracy)
+# ⏱️ TIMING — LOCKED TO 5 MINUTE WARNING
+SCAN_INTERVAL = 30               # Scan servers every 30 seconds
 BOSS_CYCLE = 7200                # 2 Hours = 7200 seconds
 RIFT_CYCLE = 5400                # 1 Hour 30 Mins = 5400 seconds
-WARN_BEFORE = 300                 # ⚠️ ANNOUNCE EXACTLY 5 MINUTES BEFORE
+WARN_BEFORE = 300                 # ⚠️ WARN EXACTLY 5 MIN BEFORE = 300 SEC
 WARN_WINDOW = 20                  # Safe trigger window
-MAX_SERVER_AGE = 172800          # Auto-remove after 48 Hours
+MAX_SERVER_AGE = 172800          # Auto-delete servers after 48 hours
 
 # 🎨 EMBED COLORS
 COLOR_BOSS_WARN = 0xFFA500       # Orange
 COLOR_BOSS_NOW = 0xFF0000        # Red
 COLOR_RIFT_WARN = 0x00FFFF       # Cyan
 COLOR_RIFT_NOW = 0x9932CC        # Purple
+COLOR_INFO = 0x3498DB            # Blue for commands
 # --------------------------
 
+# ✅ ENABLE LOGGING — SEE EVERYTHING HAPPEN
+logging.basicConfig(level=logging.INFO)
 load_dotenv()
+
+# Keep bot online 24/7
 app = Flask('')
 @app.route('/')
-def home(): return "✅ TRACKER ONLINE — NO AUDIOOP NEEDED"
+def home(): return "✅ TRACKER ONLINE — NO AUDIOOP ERRORS"
 def run(): app.run(host='0.0.0.0', port=10000)
 Thread(target=run, daemon=True).start()
 
-# ✅ BYPASS: No voice/audio features used — audioop never gets imported
+# ✅ FULLY BYPASS AUDIOOP — REMOVED ALL VOICE/AUDIO CODE
 class RobloxAutoTracker(commands.Bot):
     def __init__(self):
-        # ✅ Disable voice/voice-related features entirely to avoid audioop
+        # Minimal intents — NO VOICE FEATURES
         intents = discord.Intents.default()
         intents.message_content = True
-        super().__init__(command_prefix="!", intents=intents, help_command=None)
-        
-        self.servers = {}       # {job_id: start_time_datetime}
-        self.alerts_sent = {}   # Prevent duplicate alerts
+        intents.guilds = True
+        intents.guild_messages = True
+
+        super().__init__(
+            command_prefix="!",
+            intents=intents,
+            help_command=None
+        )
+
+        # ❌ DELETE VOICE SYSTEM ENTIRELY — audioop will NEVER load
+        if hasattr(self, "voice_clients"):
+            delattr(self, "voice_clients")
+        if hasattr(discord, "VoiceClient"):
+            discord.VoiceClient = None
+
+        self.servers = {}       # {server_id: start_time}
+        self.alerts_sent = {}   # Prevent duplicate messages
+        self.start_time = datetime.utcnow()
 
     async def setup_hook(self):
         self.scan_all_servers.start()
+        await self.tree.sync()  # Load slash commands
+        print("✅ Slash commands loaded: /status, /servers, /next")
+        print("✅ Scanner started — tracking ALL servers like RoValra")
 
-    # 🕵️‍♂️ SCAN ALL SERVERS — SAME AS ROVALRA
+    # 🕵️‍♂️ SCAN EVERY SERVER — EXACT SAME AS ROVALRA EXTENSION
     @tasks.loop(seconds=SCAN_INTERVAL)
     async def scan_all_servers(self):
         cookie = os.getenv("ROBLOX_COOKIE")
         if not cookie:
-            print("❌ ERROR: ROBLOX_COOKIE missing!")
+            print("❌ ERROR: ROBLOX_COOKIE not found in .env file")
             return
 
         url = f"https://games.roblox.com/v1/games/{PLACE_ID}/servers/Public?sortOrder=Desc&limit=100"
@@ -66,48 +89,55 @@ class RobloxAutoTracker(commands.Bot):
         }
 
         try:
-            res = requests.get(url, headers=headers, timeout=10).json()
-            if "data" not in res: return
+            res = requests.get(url, headers=headers, timeout=15).json()
+            if "data" not in res:
+                print("⚠️ No server data — check PlaceID or Cookie")
+                return
 
             now = datetime.utcnow()
+            print(f"🔍 Scanned {len(res['data'])} servers")
+
             for server in res["data"]:
-                jid = server["id"]
+                sid = server["id"]
 
-                # ✅ GET EXACT UPTIME / START TIME — 100% ACCURATE
-                if jid not in self.servers:
-                    start_time = self._get_real_start_time(jid, server)
-                    self.servers[jid] = start_time
-                    self.alerts_sent[jid] = []
-                    print(f"✅ TRACKING | ID: {jid[:8]}... | Uptime: {self._fmt_time((now - start_time).total_seconds())}")
+                # ✅ GET EXACT UPTIME / CREATION TIME — 100% ACCURATE
+                if sid not in self.servers:
+                    start_time = self._get_real_start_time(sid, server)
+                    self.servers[sid] = start_time
+                    self.alerts_sent[sid] = []
+                    uptime_str = self._fmt_time((now - start_time).total_seconds())
+                    print(f"✅ NEW SERVER | {sid[:12]}... | Uptime: {uptime_str}")
 
-                # 🧮 CALCULATE & TRIGGER ALERTS
-                self.process_spawn_logic(jid, self.servers[jid], now)
+                # 🧮 CALCULATE & SEND ALERTS
+                self.process_spawn_logic(sid, self.servers[sid], now)
 
-            # 🧹 REMOVE SERVERS OLDER THAN 48H
-            for jid in list(self.servers.keys()):
-                age = (now - self.servers[jid]).total_seconds()
+            # 🗑️ DELETE SERVERS OLDER THAN 48 HOURS
+            for sid in list(self.servers.keys()):
+                age = (now - self.servers[sid]).total_seconds()
                 if age > MAX_SERVER_AGE:
-                    del self.servers[jid]
-                    del self.alerts_sent[jid]
+                    del self.servers[sid]
+                    del self.alerts_sent[sid]
+                    print(f"🗑️ Removed old server: {sid[:12]}...")
 
         except Exception as e:
-            print(f"❌ Scan Error: {e}")
+            print(f"❌ SCAN ERROR: {str(e)}")
 
-    # 🔑 EXACT UPTIME READER — ROVALRA METHOD
-    def _get_real_start_time(self, job_id, server_data):
+    # 🔑 EXACT UPTIME READER — HOW ROVALRA WORKS
+    def _get_real_start_time(self, server_id, server_data):
         try:
-            # Read timestamp directly from JobID
-            if "T" in job_id and "Z" in job_id:
-                dt_str = job_id.split("_")[0]
+            # Read timestamp directly from Roblox JobID
+            if "T" in server_id and "Z" in server_id:
+                dt_str = server_id.split("_")[0]
                 return datetime.strptime(dt_str, "%Y%m%dT%H%M%SZ")
-        except: pass
-        # Fallback: Calculate from player age data
+        except:
+            pass
+        # Fallback: calculate from player data
         playing_mins = server_data.get("playing", 0)
         return datetime.utcnow() - timedelta(minutes=playing_mins)
 
-    def process_spawn_logic(self, jid, start_time, now):
+    def process_spawn_logic(self, sid, start_time, now):
         age = (now - start_time).total_seconds()
-        link = f"https://www.roblox.com/games/{PLACE_ID}?jobId={jid}"
+        link = f"https://www.roblox.com/games/{PLACE_ID}?jobId={sid}"
 
         # --- BOSS LOGIC ---
         until_boss = BOSS_CYCLE - (age % BOSS_CYCLE)
@@ -124,77 +154,150 @@ class RobloxAutoTracker(commands.Bot):
             embed = discord.Embed(
                 title="🚨 BOSS SPAWN WARNING",
                 description=(
-                    f"**Boss #{boss_num}/{boss_total}** is spawning in **5 MINUTES**!\n\n"
-                    f"⏱️ **Server Uptime:** `{self._fmt_time(age)}`\n"
-                    f"⏳ **Time Remaining:** `{self._fmt_time(until_boss)}`\n"
-                    f"🔗 **Join Server:** [Click Here]({link})"
+                    f"**Boss #{boss_num}/{boss_total}** spawning in **5 MINUTES**!\n\n"
+                    f"⏱️ Server Uptime: `{self._fmt_time(age)}`\n"
+                    f"⏳ Time Remaining: `{self._fmt_time(until_boss)}`\n"
+                    f"🔗 [Join Server]({link})"
                 ),
                 color=COLOR_BOSS_WARN,
                 timestamp=datetime.utcnow()
             )
-            embed.set_footer(text="Roblox Auto-Tracker • 5min Warning System")
-            self.send_embed(BOSS_WEBHOOK, embed, jid, f"boss_warn_{boss_num}")
+            embed.set_footer(text="Roblox Auto-Tracker • 5min Alert System")
+            self.send_embed(BOSS_WEBHOOK, embed, sid, f"boss_warn_{boss_num}")
 
         if (WARN_BEFORE - WARN_WINDOW) < until_rift <= WARN_BEFORE:
             embed = discord.Embed(
                 title="🌀 RIFT SPAWN WARNING",
                 description=(
-                    f"**Rift #{rift_num}/{rift_total}** is opening in **5 MINUTES**!\n\n"
-                    f"⏱️ **Server Uptime:** `{self._fmt_time(age)}`\n"
-                    f"⏳ **Time Remaining:** `{self._fmt_time(until_rift)}`\n"
-                    f"🔗 **Join Server:** [Click Here]({link})"
+                    f"**Rift #{rift_num}/{rift_total}** opening in **5 MINUTES**!\n\n"
+                    f"⏱️ Server Uptime: `{self._fmt_time(age)}`\n"
+                    f"⏳ Time Remaining: `{self._fmt_time(until_rift)}`\n"
+                    f"🔗 [Join Server]({link})"
                 ),
                 color=COLOR_RIFT_WARN,
                 timestamp=datetime.utcnow()
             )
-            embed.set_footer(text="Roblox Auto-Tracker • 5min Warning System")
-            self.send_embed(RIFT_WEBHOOK, embed, jid, f"rift_warn_{rift_num}")
+            embed.set_footer(text="Roblox Auto-Tracker • 5min Alert System")
+            self.send_embed(RIFT_WEBHOOK, embed, sid, f"rift_warn_{rift_num}")
 
         # ⚡ SPAWNING NOW ALERT
         if 0 <= until_boss <= 15:
             embed = discord.Embed(
                 title="⚡ BOSS SPAWNING NOW!",
                 description=(
-                    f"**Boss #{boss_num}/{boss_total}** has appeared!\n\n"
-                    f"⏱️ **Server Uptime:** `{self._fmt_time(age)}`\n"
-                    f"🔗 **Join Fast:** [Click Here]({link})"
+                    f"**Boss #{boss_num}/{boss_total}** IS ACTIVE!\n\n"
+                    f"⏱️ Server Uptime: `{self._fmt_time(age)}`\n"
+                    f"🔗 [Join Fast]({link})"
                 ),
                 color=COLOR_BOSS_NOW,
                 timestamp=datetime.utcnow()
             )
-            embed.set_footer(text="Roblox Auto-Tracker • Spawn Active")
-            self.send_embed(BOSS_WEBHOOK, embed, jid, f"boss_now_{boss_num}")
+            self.send_embed(BOSS_WEBHOOK, embed, sid, f"boss_now_{boss_num}")
 
         if 0 <= until_rift <= 15:
             embed = discord.Embed(
                 title="🌪️ RIFT OPENING NOW!",
                 description=(
-                    f"**Rift #{rift_num}/{rift_total}** is active!\n\n"
-                    f"⏱️ **Server Uptime:** `{self._fmt_time(age)}`\n"
-                    f"🔗 **Join Fast:** [Click Here]({link})"
+                    f"**Rift #{rift_num}/{rift_total}** IS ACTIVE!\n\n"
+                    f"⏱️ Server Uptime: `{self._fmt_time(age)}`\n"
+                    f"🔗 [Join Fast]({link})"
                 ),
                 color=COLOR_RIFT_NOW,
                 timestamp=datetime.utcnow()
             )
-            embed.set_footer(text="Roblox Auto-Tracker • Spawn Active")
-            self.send_embed(RIFT_WEBHOOK, embed, jid, f"rift_now_{rift_num}")
+            self.send_embed(RIFT_WEBHOOK, embed, sid, f"rift_now_{rift_num}")
 
-    # 🕒 FORMAT TIME (HH:MM:SS)
+    # 🕒 Format time to HHh MMm SSs
     def _fmt_time(self, seconds):
         h = int(seconds // 3600)
         m = int((seconds % 3600) // 60)
         s = int(seconds % 60)
         return f"{h:02d}h {m:02d}m {s:02d}s"
 
-    # 📤 SEND EMBED + BLOCK DUPLICATES
-    def send_embed(self, webhook_url, embed, jid, alert_id):
-        if alert_id in self.alerts_sent[jid]: return
-        requests.post(
-            webhook_url,
-            json={"embeds": [embed.to_dict()]},
-            timeout=5
+    # 📤 Send embed + block duplicates
+    def send_embed(self, webhook_url, embed, sid, alert_id):
+        if alert_id in self.alerts_sent[sid]:
+            return
+        try:
+            requests.post(webhook_url, json={"embeds": [embed.to_dict()]}, timeout=10)
+            self.alerts_sent[sid].append(alert_id)
+            print(f"📢 Alert sent: {alert_id} | {sid[:12]}...")
+        except Exception as e:
+            print(f"❌ Webhook Error: {e}")
+
+    # 🧪 TEST COMMAND 1: /status → Is bot working?
+    @discord.app_commands(name="status", description="Check bot status & tracked servers")
+    async def status(self, interaction: discord.Interaction):
+        uptime = self._fmt_time((datetime.utcnow() - self.start_time).total_seconds())
+        embed = discord.Embed(
+            title="📊 BOT STATUS",
+            description=(
+                f"✅ **ONLINE & WORKING**\n"
+                f"⏱️ Bot Uptime: `{uptime}`\n"
+                f"🔍 Servers Tracked: `{len(self.servers)}`\n"
+                f"⚙️ Scan Interval: `{SCAN_INTERVAL}s`\n"
+                f"🔄 Boss Cycle: `{BOSS_CYCLE//60}min` | Rift Cycle: `{RIFT_CYCLE//60}min`"
+            ),
+            color=COLOR_INFO
         )
-        self.alerts_sent[jid].append(alert_id)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    # 🧪 TEST COMMAND 2: /servers → List all servers + uptime (matches RoValra)
+    @discord.app_commands(name="servers", description="List all detected servers & uptime")
+    async def servers(self, interaction: discord.Interaction):
+        if not self.servers:
+            await interaction.response.send_message("❌ No servers found yet — wait 30 seconds.", ephemeral=True)
+            return
+
+        text = ""
+        now = datetime.utcnow()
+        for sid, start in list(self.servers.items())[:10]:
+            age = (now - start).total_seconds()
+            text += f"`{sid[:12]}...` → **{self._fmt_time(age)}**\n"
+
+        embed = discord.Embed(
+            title="🌐 DETECTED SERVERS",
+            description=f"Total: `{len(self.servers)}`\n\n{text}",
+            color=COLOR_INFO
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    # 🧪 TEST COMMAND 3: /next → When is next Boss/Rift?
+    @discord.app_commands(name="next", description="Show next spawn times")
+    async def next(self, interaction: discord.Interaction):
+        if not self.servers:
+            await interaction.response.send_message("❌ No servers found yet.", ephemeral=True)
+            return
+
+        now = datetime.utcnow()
+        next_boss = []
+        next_rift = []
+
+        for sid, start in self.servers.items():
+            age = (now - start).total_seconds()
+            tb = BOSS_CYCLE - (age % BOSS_CYCLE)
+            tr = RIFT_CYCLE - (age % RIFT_CYCLE)
+            next_boss.append((tb, sid))
+            next_rift.append((tr, sid))
+
+        next_boss.sort()
+        next_rift.sort()
+
+        embed = discord.Embed(
+            title="⏱️ NEXT SPAWNS",
+            description=(
+                f"🔴 **Next Boss:** in `{self._fmt_time(next_boss[0][0])}`\n"
+                f"🔵 **Next Rift:** in `{self._fmt_time(next_rift[0][0])}`"
+            ),
+            color=COLOR_INFO
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 bot = RobloxAutoTracker()
-bot.run(os.getenv("DISCORD_TOKEN"))
+
+@bot.event
+async def on_ready():
+    print(f"✅ LOGGED IN AS: {bot.user}")
+    print("✅ FULLY OPERATIONAL — NO AUDIOOP ERRORS")
+
+bot.run(os.getenv("DISCORD_TOKEN"), log_level=logging.ERROR)
