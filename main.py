@@ -11,9 +11,9 @@ import logging
 # --------------------------
 # ✅ YOUR SETTINGS — EDIT THESE
 # --------------------------
-PLACE_ID = "13358463560"          # Your Roblox Game ID
-BOSS_WEBHOOK = "https://discord.com/api/webhooks/1502263569633509487/NGKjFf4EGD32m3UbuafIadrObSSiOxujGXvWcWLSQj8OEAHRcHw-X_Q0OnZOq1r8Ykvw"
-RIFT_WEBHOOK = "https://discord.com/api/webhooks/1502264183956308130/xLuNT-iod8k245vT_jx5u4pLVCasuwtLBAT0NjaJvR3IISH5UA3pjJ43T1bph6ENyzh-"
+PLACE_ID = "YOUR_ROBLOX_PLACE_ID"          # Your Roblox Game ID
+BOSS_WEBHOOK = "YOUR_BOSS_WEBHOOK_URL"
+RIFT_WEBHOOK = "YOUR_RIFT_WEBHOOK_URL"
 
 # ⏱️ TIMING — LOCKED TO 5 MINUTE WARNING
 SCAN_INTERVAL = 30               # Scan servers every 30 seconds
@@ -226,7 +226,7 @@ class RobloxAutoTracker(commands.Bot):
             print(f"❌ Webhook Error: {e}")
 
     # 🧪 TEST COMMAND 1: /status → Is bot working?
-    @discord.app_commands(name="status", description="Check bot status & tracked servers")
+    @commands.app_commands(name="status", description="Check bot status & tracked servers")
     async def status(self, interaction: discord.Interaction):
         uptime = self._fmt_time((datetime.utcnow() - self.start_time).total_seconds())
         embed = discord.Embed(
@@ -243,7 +243,7 @@ class RobloxAutoTracker(commands.Bot):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     # 🧪 TEST COMMAND 2: /servers → List all servers + uptime (matches RoValra)
-    @discord.app_commands(name="servers", description="List all detected servers & uptime")
+    @commands.app_commands(name="servers", description="List all detected servers & uptime")
     async def servers(self, interaction: discord.Interaction):
         if not self.servers:
             await interaction.response.send_message("❌ No servers found yet — wait 30 seconds.", ephemeral=True)
@@ -263,7 +263,7 @@ class RobloxAutoTracker(commands.Bot):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     # 🧪 TEST COMMAND 3: /next → When is next Boss/Rift?
-    @discord.app_commands(name="next", description="Show next spawn times")
+    @commands.app_commands(name="next", description="Show next spawn times")
     async def next(self, interaction: discord.Interaction):
         if not self.servers:
             await interaction.response.send_message("❌ No servers found yet.", ephemeral=True)
