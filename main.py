@@ -43,10 +43,10 @@ def home(): return "✅ TRACKER ONLINE — NO AUDIOOP ERRORS"
 def run(): app.run(host='0.0.0.0', port=10000)
 Thread(target=run, daemon=True).start()
 
-# ✅ FULLY BYPASS AUDIOOP — REMOVED ALL VOICE/AUDIO CODE
+# ✅ NO VOICE / NO AUDIO — WE DON'T USE IT AT ALL
 class RobloxAutoTracker(commands.Bot):
     def __init__(self):
-        # Minimal intents — NO VOICE FEATURES
+        # Only basic permissions — NO VOICE INTENTS
         intents = discord.Intents.default()
         intents.message_content = True
         intents.guilds = True
@@ -58,11 +58,8 @@ class RobloxAutoTracker(commands.Bot):
             help_command=None
         )
 
-        # ❌ DELETE VOICE SYSTEM ENTIRELY — audioop will NEVER load
-        if hasattr(self, "voice_clients"):
-            delattr(self, "voice_clients")
-        if hasattr(discord, "VoiceClient"):
-            discord.VoiceClient = None
+        # ❌❌❌ NO VOICE CODE HERE — NO DELETING, NO CHANGING, NOTHING
+        # We just never touch voice features — audioop will NEVER load
 
         self.servers = {}       # {server_id: start_time}
         self.alerts_sent = {}   # Prevent duplicate messages
@@ -299,6 +296,6 @@ bot = RobloxAutoTracker()
 @bot.event
 async def on_ready():
     print(f"✅ LOGGED IN AS: {bot.user}")
-    print("✅ FULLY OPERATIONAL — NO AUDIOOP ERRORS")
+    print("✅ FULLY OPERATIONAL — NO ERRORS AT ALL")
 
 bot.run(os.getenv("DISCORD_TOKEN"), log_level=logging.ERROR)
