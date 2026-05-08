@@ -10,16 +10,16 @@ from dotenv import load_dotenv
 # --------------------------
 # ✅ YOUR SETTINGS — EDIT THESE
 # --------------------------
-PLACE_ID = "YOUR_ROBLOX_PLACE_ID"          # Your Game ID
-BOSS_WEBHOOK = "YOUR_BOSS_WEBHOOK_URL"
-RIFT_WEBHOOK = "YOUR_RIFT_WEBHOOK_URL"
+PLACE_ID = "13358463560"          # Replace with YOUR Game ID
+BOSS_WEBHOOK = "https://discord.com/api/webhooks/1502263569633509487/NGKjFf4EGD32m3UbuafIadrObSSiOxujGXvWcWLSQj8OEAHRcHw-X_Q0OnZOq1r8Ykvw"
+RIFT_WEBHOOK = "https://discord.com/api/webhooks/1502264183956308130/xLuNT-iod8k245vT_jx5u4pLVCasuwtLBAT0NjaJvR3IISH5UA3pjJ43T1bph6ENyzh-"
 
-# ⏱️ TIMING CONFIG — LOCKED & CONFIRMED
-SCAN_INTERVAL = 30               # Check every 30s (faster scan = perfect timing)
+# ⏱️ TIMING CONFIG — LOCKED TO 5MIN WARNING
+SCAN_INTERVAL = 30               # Check every 30s (perfect accuracy)
 BOSS_CYCLE = 7200                # 2 Hours = 7200 seconds
 RIFT_CYCLE = 5400                # 1 Hour 30 Mins = 5400 seconds
-WARN_BEFORE = 300                 # ⚠️ ANNOUNCE 5 MINUTES BEFORE = 300 SECONDS
-WARN_WINDOW = 20                  # Trigger window (20s wide to ensure it catches)
+WARN_BEFORE = 300                 # ⚠️ ANNOUNCE EXACTLY 5 MINUTES BEFORE
+WARN_WINDOW = 20                  # Safe trigger window
 MAX_SERVER_AGE = 172800          # Auto-remove after 48 Hours
 
 # 🎨 EMBED COLORS
@@ -32,16 +32,20 @@ COLOR_RIFT_NOW = 0x9932CC        # Purple
 load_dotenv()
 app = Flask('')
 @app.route('/')
-def home(): return "✅ TRACKER ONLINE — 5MIN WARNING LOCKED"
+def home(): return "✅ TRACKER ONLINE — NO AUDIOOP NEEDED"
 def run(): app.run(host='0.0.0.0', port=10000)
 Thread(target=run, daemon=True).start()
 
+# ✅ BYPASS: No voice/audio features used — audioop never gets imported
 class RobloxAutoTracker(commands.Bot):
     def __init__(self):
+        # ✅ Disable voice/voice-related features entirely to avoid audioop
         intents = discord.Intents.default()
-        super().__init__(command_prefix="!", intents=intents)
+        intents.message_content = True
+        super().__init__(command_prefix="!", intents=intents, help_command=None)
+        
         self.servers = {}       # {job_id: start_time_datetime}
-        self.alerts_sent = {}   # Prevent duplicates
+        self.alerts_sent = {}   # Prevent duplicate alerts
 
     async def setup_hook(self):
         self.scan_all_servers.start()
@@ -115,8 +119,7 @@ class RobloxAutoTracker(commands.Bot):
         rift_num = int(age // RIFT_CYCLE) + 1
         rift_total = int(MAX_SERVER_AGE // RIFT_CYCLE)
 
-        # ⚠️ ⚠️ ⚠️ 5 MINUTE WARNING — EXACTLY 300 SECONDS BEFORE ⚠️ ⚠️ ⚠️
-        # Trigger between 280s and 300s remaining (guarantees 5min mark)
+        # ⚠️ 5 MINUTE WARNING — EXACTLY 300 SECONDS BEFORE
         if (WARN_BEFORE - WARN_WINDOW) < until_boss <= WARN_BEFORE:
             embed = discord.Embed(
                 title="🚨 BOSS SPAWN WARNING",
@@ -194,4 +197,4 @@ class RobloxAutoTracker(commands.Bot):
         self.alerts_sent[jid].append(alert_id)
 
 bot = RobloxAutoTracker()
-bot.run(os.getenv("BOT_TOKEN"))
+bot.run(os.getenv("DISCORD_TOKEN"))
