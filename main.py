@@ -334,6 +334,6 @@ async def on_ready():
 
 threading.Thread(target=run_web).start()
 
-print("TOKEN =", DISCORD_TOKEN)
+print("TOKEN =", "DISCORD_TOKEN")
 
 bot.run(os.getenv("DISCORD_TOKEN"))
