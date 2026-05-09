@@ -33,11 +33,12 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 ROBLOX_COOKIE = os.getenv("ROBLOX_COOKIE")
 
 PLACE_ID = 13358463560
+
 CHECK_INTERVAL = 30
 
 DATA_FILE = "servers.json"
 
-# PUT YOUR CHANNEL IDS
+# PUT YOUR CHANNEL IDS HERE
 RIFT_CHANNEL_ID = 1502236122615648326
 BOSS_CHANNEL_ID = 1502236106597470288
 
@@ -94,6 +95,7 @@ JOIN_URL = (
 async def fetch_servers():
 
     servers = []
+
     cursor = None
 
     async with aiohttp.ClientSession() as session:
@@ -127,7 +129,12 @@ async def fetch_servers():
 
                     await asyncio.sleep(0.15)
 
-            except:
+            except Exception as e:
+
+                print(
+                    f"[FETCH ERROR] {e}"
+                )
+
                 break
 
     return servers
@@ -144,65 +151,168 @@ async def fetch_real_uptime(server_id):
         "User-Agent": "Roblox/WinInet"
     }
 
-    payload = {
-        "placeId": PLACE_ID,
-        "gameId": server_id,
-        "gameJoinAttemptId": str(uuid.uuid4())
-    }
+    valid_results = []
 
-    try:
+    for _ in range(8):
 
-        async with aiohttp.ClientSession() as session:
+        payload = {
+            "placeId": PLACE_ID,
+            "gameId": server_id,
+            "gameJoinAttemptId": str(uuid.uuid4())
+        }
 
-            async with session.post(
-                JOIN_URL,
-                headers=headers,
-                json=payload
-            ) as response:
+        try:
 
-                if response.status != 200:
-                    return None
+            async with aiohttp.ClientSession() as session:
 
-                data = await response.json()
+                async with session.post(
+                    JOIN_URL,
+                    headers=headers,
+                    json=payload
+                ) as response:
 
-                returned_job_id = data.get(
-                    "jobId"
-                )
+                    if response.status != 200:
+                        continue
 
-                # Reject redirects
-                if returned_job_id != server_id:
-                    return None
+                    data = await response.json()
 
-                join_script = data.get(
-                    "joinScript",
-                    {}
-                )
+                    # =================================================
+                    # VALIDATE JOB ID
+                    # =================================================
 
-                claimed_time = join_script.get(
-                    "ServerClaimedTime"
-                )
+                    if data.get("jobId") != server_id:
+                        continue
 
-                if not claimed_time:
-                    return None
+                    join_script = data.get(
+                        "joinScript",
+                        {}
+                    )
 
-                current_ms = int(
-                    time.time() * 1000
-                )
+                    # =================================================
+                    # VALIDATE GAME ID
+                    # =================================================
 
-                uptime = (
-                    current_ms - claimed_time
-                ) // 1000
+                    if (
+                        join_script.get("GameId")
+                        != server_id
+                    ):
+                        continue
 
-                if uptime < 0:
-                    return None
+                    # =================================================
+                    # VALIDATE PLACE
+                    # =================================================
 
-                if uptime > MAX_SERVER_AGE:
-                    return None
+                    if (
+                        int(join_script.get("PlaceId", 0))
+                        != PLACE_ID
+                    ):
+                        continue
 
-                return int(uptime)
+                    # =================================================
+                    # SESSION VALIDATION
+                    # =================================================
 
-    except:
+                    raw_session = join_script.get(
+                        "SessionId"
+                    )
+
+                    if not raw_session:
+                        continue
+
+                    try:
+
+                        session_json = json.loads(
+                            raw_session
+                        )
+
+                    except:
+                        continue
+
+                    # =================================================
+                    # VALIDATE SESSION GAME
+                    # =================================================
+
+                    if (
+                        session_json.get("GameId")
+                        != server_id
+                    ):
+                        continue
+
+                    # =================================================
+                    # GET CLAIMED TIME
+                    # =================================================
+
+                    claimed_time = join_script.get(
+                        "ServerClaimedTime"
+                    )
+
+                    if not claimed_time:
+                        continue
+
+                    current_ms = int(
+                        time.time() * 1000
+                    )
+
+                    uptime = (
+                        current_ms - claimed_time
+                    ) // 1000
+
+                    # =================================================
+                    # INVALID UPTIMES
+                    # =================================================
+
+                    if uptime < 0:
+                        continue
+
+                    if uptime > MAX_SERVER_AGE:
+                        continue
+
+                    valid_results.append(
+                        int(uptime)
+                    )
+
+        except Exception as e:
+
+            print(
+                f"[UPTIME ERROR] {e}"
+            )
+
+        await asyncio.sleep(0.35)
+
+    # =====================================================
+    # REQUIRE MANY MATCHES
+    # =====================================================
+
+    if len(valid_results) < 3:
         return None
+
+    # =====================================================
+    # OUTLIER FILTER
+    # =====================================================
+
+    valid_results.sort()
+
+    median = valid_results[
+        len(valid_results) // 2
+    ]
+
+    filtered = []
+
+    for value in valid_results:
+
+        if abs(value - median) <= 90:
+            filtered.append(value)
+
+    if len(filtered) < 2:
+        return None
+
+    # =====================================================
+    # FINAL AVERAGE
+    # =====================================================
+
+    return int(
+        sum(filtered) / len(filtered)
+    )
 
 # =========================================================
 # FORMAT TIME
@@ -211,12 +321,15 @@ async def fetch_real_uptime(server_id):
 def format_time(seconds):
 
     hours = seconds // 3600
-    minutes = (seconds % 3600) // 60
+
+    minutes = (
+        seconds % 3600
+    ) // 60
 
     return f"{hours}h {minutes}m"
 
 # =========================================================
-# EVENT SETTINGS
+# EVENTS
 # =========================================================
 
 RIFT_INTERVAL = 5400
@@ -319,7 +432,9 @@ async def server_tracker():
                         - predicted_uptime
                     )
 
-                    # ONLY ACCEPT VERY SMALL DIFFERENCES
+                    # =================================================
+                    # ONLY ACCEPT SMALL DIFFERENCES
+                    # =================================================
 
                     if difference <= 60:
 
@@ -334,8 +449,6 @@ async def server_tracker():
 
                 data["last_real_check"] = current_time
 
-            # LOCK UPTIME
-
             data["uptime"] = predicted_uptime
 
             data["last_seen"] = current_time
@@ -343,6 +456,20 @@ async def server_tracker():
         uptime = int(
             server_database[server_id]["uptime"]
         )
+
+        # =================================================
+        # REMOVE OVER 48H
+        # =================================================
+
+        if uptime > MAX_SERVER_AGE:
+
+            print(
+                f"[48H REMOVED] {server_id}"
+            )
+
+            del server_database[server_id]
+
+            continue
 
         join_link = (
             f"https://www.roblox.com/games/start?"
@@ -377,7 +504,9 @@ async def server_tracker():
             and uptime < next_rift
         ):
 
-            unique_id = f"{server_id}_{next_rift}"
+            unique_id = (
+                f"{server_id}_{next_rift}"
+            )
 
             if (
                 unique_id
@@ -408,6 +537,10 @@ async def server_tracker():
                     unique_id
                 )
 
+                print(
+                    f"[RIFT] {server_id}"
+                )
+
         # =================================================
         # BOSS ALERT
         # =================================================
@@ -421,7 +554,9 @@ async def server_tracker():
             and uptime < next_boss
         ):
 
-            unique_id = f"{server_id}_{next_boss}"
+            unique_id = (
+                f"{server_id}_{next_boss}"
+            )
 
             if (
                 unique_id
@@ -452,6 +587,10 @@ async def server_tracker():
                     unique_id
                 )
 
+                print(
+                    f"[BOSS] {server_id}"
+                )
+
     # =====================================================
     # REMOVE DEAD SERVERS
     # =====================================================
@@ -476,7 +615,9 @@ async def server_tracker():
 
     for dead in remove_list:
 
-        print(f"[REMOVED] {dead}")
+        print(
+            f"[REMOVED] {dead}"
+        )
 
         del server_database[dead]
 
@@ -514,6 +655,32 @@ async def tracked(
         f"Tracking {len(server_database)} servers."
     )
 
+@bot.tree.command(
+    name="uptime",
+    description="Check tracked server uptime"
+)
+async def uptime(
+    interaction: discord.Interaction,
+    server_id: str
+):
+
+    if server_id not in server_database:
+
+        await interaction.response.send_message(
+            "❌ Server not tracked."
+        )
+
+        return
+
+    uptime_seconds = int(
+        server_database[server_id]["uptime"]
+    )
+
+    await interaction.response.send_message(
+        f"⏱️ Uptime: "
+        f"`{format_time(uptime_seconds)}`"
+    )
+
 # =========================================================
 # READY
 # =========================================================
@@ -523,7 +690,9 @@ async def on_ready():
 
     await bot.tree.sync()
 
-    print(f"Logged in as {bot.user}")
+    print(
+        f"Logged in as {bot.user}"
+    )
 
     if not server_tracker.is_running():
         server_tracker.start()
