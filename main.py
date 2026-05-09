@@ -149,60 +149,91 @@ async def fetch_real_uptime(server_id):
         "gameJoinAttemptId": str(uuid.uuid4())
     }
 
-    try:
+    valid_results = []
 
-        async with aiohttp.ClientSession() as session:
+    # =====================================================
+    # MULTIPLE CHECKS
+    # =====================================================
 
-            async with session.post(
-                JOIN_URL,
-                headers=headers,
-                json=payload
-            ) as response:
+    for _ in range(3):
 
-                if response.status != 200:
-                    return None
+        try:
 
-                data = await response.json()
+            async with aiohttp.ClientSession() as session:
 
-                returned_job_id = data.get(
-                    "jobId"
-                )
+                async with session.post(
+                    JOIN_URL,
+                    headers=headers,
+                    json=payload
+                ) as response:
 
-                # Reject mismatched servers
-                if returned_job_id != server_id:
-                    return None
+                    if response.status != 200:
+                        continue
 
-                join_script = data.get(
-                    "joinScript",
-                    {}
-                )
+                    data = await response.json()
 
-                claimed_time = join_script.get(
-                    "ServerClaimedTime"
-                )
+                    returned_job_id = data.get(
+                        "jobId"
+                    )
 
-                if not claimed_time:
-                    return None
+                    # Reject redirects
+                    if returned_job_id != server_id:
+                        continue
 
-                current_ms = int(
-                    time.time() * 1000
-                )
+                    join_script = data.get(
+                        "joinScript",
+                        {}
+                    )
 
-                uptime = (
-                    current_ms - claimed_time
-                ) // 1000
+                    claimed_time = join_script.get(
+                        "ServerClaimedTime"
+                    )
 
-                # Reject impossible uptime
-                if uptime < 0:
-                    return None
+                    if not claimed_time:
+                        continue
 
-                if uptime > MAX_SERVER_AGE:
-                    return None
+                    current_ms = int(
+                        time.time() * 1000
+                    )
 
-                return int(uptime)
+                    uptime = (
+                        current_ms - claimed_time
+                    ) // 1000
 
-    except:
+                    # Reject impossible values
+                    if uptime < 0:
+                        continue
+
+                    if uptime > MAX_SERVER_AGE:
+                        continue
+
+                    valid_results.append(
+                        int(uptime)
+                    )
+
+        except:
+            pass
+
+        await asyncio.sleep(0.4)
+
+    # =====================================================
+    # NO VALID RESULTS
+    # =====================================================
+
+    if not valid_results:
         return None
+
+    # =====================================================
+    # USE MEDIAN RESULT
+    # =====================================================
+
+    valid_results.sort()
+
+    median = valid_results[
+        len(valid_results) // 2
+    ]
+
+    return median
 
 # =========================================================
 # FORMAT TIME
@@ -278,40 +309,79 @@ async def server_tracker():
                 f"[NEW] {server_id}"
             )
 
-        else:
+else:
 
-            data = server_database[server_id]
+    data = server_database[server_id]
 
-            elapsed = (
-                current_time
-                - data["last_check"]
+    elapsed = (
+        current_time
+        - data["last_check"]
+    )
+
+    predicted_uptime = (
+        data["uptime"] + elapsed
+    )
+
+    data["last_check"] = current_time
+
+    # =================================================
+    # FETCH VERIFIED UPTIME
+    # =================================================
+
+    real_uptime = await fetch_real_uptime(
+        server_id
+    )
+
+    if real_uptime is not None:
+
+        difference = abs(
+            real_uptime
+            - predicted_uptime
+        )
+
+        # =============================================
+        # ACCEPT SMALL DIFFERENCES
+        # =============================================
+
+        if difference <= 120:
+
+            data["uptime"] = real_uptime
+
+        # =============================================
+        # MEDIUM DIFFERENCE:
+        # SMOOTH CORRECTION
+        # =============================================
+
+        elif difference <= 600:
+
+            averaged = int(
+                (
+                    predicted_uptime
+                    + real_uptime
+                ) / 2
             )
 
-            # Natural uptime growth
-            data["uptime"] += elapsed
+            data["uptime"] = averaged
 
-            data["last_check"] = current_time
+        # =============================================
+        # MASSIVE DIFFERENCE:
+        # IGNORE ROBLOX RESPONSE
+        # =============================================
 
-            # Occasionally resync
-            if current_time % 300 < CHECK_INTERVAL:
+        else:
 
-                real_uptime = await fetch_real_uptime(
-                    server_id
-                )
+            data["uptime"] = predicted_uptime
 
-                if real_uptime:
+            print(
+                f"[IGNORED BAD UPTIME] "
+                f"{server_id}"
+            )
 
-                    difference = abs(
-                        real_uptime
-                        - data["uptime"]
-                    )
+    else:
 
-                    # Only accept reasonable corrections
-                    if difference < 600:
+        data["uptime"] = predicted_uptime
 
-                        data["uptime"] = real_uptime
-
-            data["last_seen"] = current_time
+    data["last_seen"] = current_time
 
         uptime = server_database[server_id]["uptime"]
 
