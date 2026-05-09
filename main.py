@@ -70,6 +70,12 @@ def save_data():
 server_database = load_data()
 
 # =========================================================
+# IGNORE EXISTING SERVERS ON STARTUP
+# =========================================================
+
+FIRST_SCAN_COMPLETE = False
+
+# =========================================================
 # ROBLOX API
 # =========================================================
 
@@ -155,6 +161,7 @@ while boss <= 172800:
 async def server_tracker():
 
     global server_database
+    global FIRST_SCAN_COMPLETE
 
     current_time = int(time.time())
 
@@ -183,11 +190,20 @@ async def server_tracker():
                 "boss_announced": []
             }
 
-            print(f"[NEW SERVER] {server_id}")
+            # Ignore startup servers
+            if FIRST_SCAN_COMPLETE:
+                print(f"[NEW SERVER] {server_id}")
 
         else:
 
             server_database[server_id]["last_seen"] = current_time
+
+        # =================================================
+        # SKIP INITIAL SERVERS
+        # =================================================
+
+        if not FIRST_SCAN_COMPLETE:
+            continue
 
         # =================================================
         # UPTIME
@@ -290,6 +306,14 @@ async def server_tracker():
         del server_database[dead]
 
     save_data()
+
+    # =====================================================
+    # FIRST SCAN COMPLETE
+    # =====================================================
+
+    if not FIRST_SCAN_COMPLETE:
+        FIRST_SCAN_COMPLETE = True
+        print("Initial scan complete.")
 
     print(f"Tracking {len(live_servers)} live servers")
 
