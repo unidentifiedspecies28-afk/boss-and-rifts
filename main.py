@@ -11,7 +11,7 @@ from discord.ext import commands, tasks
 from flask import Flask
 
 # =========================================================
-# WEB SERVER (FOR RENDER WEB SERVICE)
+# WEB SERVER (RENDER)
 # =========================================================
 
 app = Flask(__name__)
@@ -34,7 +34,7 @@ PLACE_ID = 13358463560
 CHECK_INTERVAL = 20
 DATA_FILE = "servers.json"
 
-# Discord channels
+# CHANGE THESE
 RIFT_CHANNEL_ID = 1502236122615648326
 BOSS_CHANNEL_ID = 1502236106597470288
 
@@ -43,10 +43,14 @@ BOSS_CHANNEL_ID = 1502236106597470288
 # =========================================================
 
 intents = discord.Intents.default()
-bot = commands.Bot(command_prefix="!", intents=intents)
+
+bot = commands.Bot(
+    command_prefix="!",
+    intents=intents
+)
 
 # =========================================================
-# LOAD / SAVE DATABASE
+# DATABASE
 # =========================================================
 
 def load_data():
@@ -131,14 +135,12 @@ def format_time(seconds):
 RIFT_MILESTONES = []
 BOSS_MILESTONES = []
 
-# Rift every 1h 30m
 rift = 5400
 
 while rift <= 172800:
     RIFT_MILESTONES.append(rift)
     rift += 5400
 
-# Boss every 2h
 boss = 7200
 
 while boss <= 172800:
@@ -146,7 +148,7 @@ while boss <= 172800:
     boss += 7200
 
 # =========================================================
-# SERVER TRACKER
+# TRACKER
 # =========================================================
 
 @tasks.loop(seconds=CHECK_INTERVAL)
@@ -156,7 +158,7 @@ async def server_tracker():
 
     current_time = int(time.time())
 
-    print(f"[{datetime.utcnow()}] Scanning Roblox servers...")
+    print(f"[{datetime.utcnow()}] Scanning servers...")
 
     servers = await fetch_servers()
 
@@ -292,30 +294,51 @@ async def server_tracker():
     print(f"Tracking {len(live_servers)} live servers")
 
 # =========================================================
-# COMMANDS
+# SLASH COMMANDS
 # =========================================================
 
-@bot.command()
-async def uptime(ctx, server_id: str):
+@bot.tree.command(
+    name="ping",
+    description="Check if the bot is online"
+)
+async def ping(interaction: discord.Interaction):
+
+    await interaction.response.send_message("🏓 Pong!")
+
+@bot.tree.command(
+    name="tracked",
+    description="Show tracked server count"
+)
+async def tracked(interaction: discord.Interaction):
+
+    await interaction.response.send_message(
+        f"Tracking `{len(server_database)}` servers."
+    )
+
+@bot.tree.command(
+    name="uptime",
+    description="Check Roblox server uptime"
+)
+async def uptime(
+    interaction: discord.Interaction,
+    server_id: str
+):
 
     if server_id not in server_database:
-        await ctx.send("Server not tracked.")
+
+        await interaction.response.send_message(
+            "❌ Server not tracked."
+        )
+
         return
 
-    uptime = (
+    uptime_seconds = (
         int(time.time())
         - server_database[server_id]["first_seen"]
     )
 
-    await ctx.send(
-        f"⏱️ Uptime: `{format_time(uptime)}`"
-    )
-
-@bot.command()
-async def tracked(ctx):
-
-    await ctx.send(
-        f"Tracking `{len(server_database)}` servers."
+    await interaction.response.send_message(
+        f"⏱️ Uptime: `{format_time(uptime_seconds)}`"
     )
 
 # =========================================================
@@ -324,6 +347,8 @@ async def tracked(ctx):
 
 @bot.event
 async def on_ready():
+
+    await bot.tree.sync()
 
     print(f"Logged in as {bot.user}")
 
@@ -335,7 +360,5 @@ async def on_ready():
 # =========================================================
 
 threading.Thread(target=run_web).start()
-
-print("TOKEN =", TOKEN)
 
 bot.run(TOKEN)
