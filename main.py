@@ -1,23 +1,40 @@
-import discord
-from discord.ext import commands, tasks
-import aiohttp
-import asyncio
-import json
 import os
 import time
+import json
+import asyncio
+import threading
 from datetime import datetime
+
+import aiohttp
+import discord
+from discord.ext import commands, tasks
+from flask import Flask
+
+# =========================================================
+# WEB SERVER (FOR RENDER WEB SERVICE)
+# =========================================================
+
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "Roblox Tracker Bot Online"
+
+def run_web():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
 
 # =========================================================
 # CONFIG
 # =========================================================
 
-TOKEN = "DISCORD_TOKEN"
+TOKEN = os.getenv("DISCORD_TOKEN")
 
 PLACE_ID = 13358463560
 CHECK_INTERVAL = 20
 DATA_FILE = "servers.json"
 
-# Separate channels
+# Discord channels
 RIFT_CHANNEL_ID = 1502236122615648326
 BOSS_CHANNEL_ID = 1502236106597470288
 
@@ -29,16 +46,20 @@ intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # =========================================================
-# STORAGE
+# LOAD / SAVE DATABASE
 # =========================================================
 
 def load_data():
+
     if os.path.exists(DATA_FILE):
+
         with open(DATA_FILE, "r") as f:
             return json.load(f)
+
     return {}
 
 def save_data():
+
     with open(DATA_FILE, "w") as f:
         json.dump(server_database, f, indent=4)
 
@@ -93,7 +114,7 @@ async def fetch_servers():
     return servers
 
 # =========================================================
-# TIME FORMAT
+# TIME FORMATTER
 # =========================================================
 
 def format_time(seconds):
@@ -110,14 +131,14 @@ def format_time(seconds):
 RIFT_MILESTONES = []
 BOSS_MILESTONES = []
 
-# Rifts every 1h 30m
+# Rift every 1h 30m
 rift = 5400
 
 while rift <= 172800:
     RIFT_MILESTONES.append(rift)
     rift += 5400
 
-# Bosses every 2h
+# Boss every 2h
 boss = 7200
 
 while boss <= 172800:
@@ -125,7 +146,7 @@ while boss <= 172800:
     boss += 7200
 
 # =========================================================
-# TRACKER
+# SERVER TRACKER
 # =========================================================
 
 @tasks.loop(seconds=CHECK_INTERVAL)
@@ -135,7 +156,7 @@ async def server_tracker():
 
     current_time = int(time.time())
 
-    print(f"[{datetime.utcnow()}] Scanning servers...")
+    print(f"[{datetime.utcnow()}] Scanning Roblox servers...")
 
     servers = await fetch_servers()
 
@@ -310,7 +331,9 @@ async def on_ready():
         server_tracker.start()
 
 # =========================================================
-# START BOT
+# START EVERYTHING
 # =========================================================
 
-bot.run("DISCORD_TOKEN")
+threading.Thread(target=run_web).start()
+
+bot.run(TOKEN)
