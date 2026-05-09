@@ -28,8 +28,6 @@ def run_web():
 # CONFIG
 # =========================================================
 
-TOKEN = os.getenv("DISCORD_TOKEN")
-
 PLACE_ID = 13358463560
 CHECK_INTERVAL = 20
 DATA_FILE = "servers.json"
@@ -338,4 +336,4 @@ threading.Thread(target=run_web).start()
 
 print("TOKEN =", TOKEN)
 
-bot.run(TOKEN)
+bot.run(os.getenv("DISCORD_TOKEN"))
