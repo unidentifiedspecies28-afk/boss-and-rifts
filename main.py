@@ -242,16 +242,8 @@ def format_time(seconds):
 # EVENT SYSTEM
 # =========================================================
 
-# Rifts:
-# Spawn every 1h 30m
-# Alert 5 mins before
-
 RIFT_INTERVAL = 5400
 RIFT_WARNING = 300
-
-# Bosses:
-# Spawn every 2h
-# Alert 5 mins before
 
 BOSS_INTERVAL = 7200
 BOSS_WARNING = 300
@@ -273,9 +265,13 @@ async def server_tracker():
 
     servers = await fetch_servers()
 
+    live_server_ids = set()
+
     for server in servers:
 
         server_id = server["id"]
+
+        live_server_ids.add(server_id)
 
         uptime = await get_server_uptime(
             server_id
@@ -299,6 +295,10 @@ async def server_tracker():
                 "boss_sent": [],
                 "last_seen": current_time
             }
+
+            print(
+                f"[NEW SERVER] {server_id}"
+            )
 
         server_database[server_id]["last_seen"] = (
             current_time
@@ -415,6 +415,52 @@ async def server_tracker():
                     f"[BOSS WARNING] "
                     f"{server_id}"
                 )
+
+    # =====================================================
+    # REMOVE DEAD SERVERS
+    # =====================================================
+
+    remove_list = []
+
+    for saved_server_id in server_database:
+
+        data = server_database[saved_server_id]
+
+        # Server no longer exists
+        if saved_server_id not in live_server_ids:
+
+            if (
+                current_time
+                - data["last_seen"]
+            ) > (CHECK_INTERVAL * 2):
+
+                print(
+                    f"Removing dead server "
+                    f"{saved_server_id}"
+                )
+
+                remove_list.append(
+                    saved_server_id
+                )
+
+        # Cleanup old entries
+        elif (
+            current_time
+            - data["last_seen"]
+        ) > MAX_SERVER_AGE:
+
+            print(
+                f"Removing old server "
+                f"{saved_server_id}"
+            )
+
+            remove_list.append(
+                saved_server_id
+            )
+
+    for dead in remove_list:
+
+        del server_database[dead]
 
     save_data()
 
