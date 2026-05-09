@@ -132,7 +132,7 @@ async def fetch_servers():
     return servers
 
 # =========================================================
-# GET REAL UPTIME
+# REAL UPTIME
 # =========================================================
 
 async def fetch_real_uptime(server_id):
@@ -143,19 +143,19 @@ async def fetch_real_uptime(server_id):
         "User-Agent": "Roblox/WinInet"
     }
 
-    payload = {
-        "placeId": PLACE_ID,
-        "gameId": server_id,
-        "gameJoinAttemptId": str(uuid.uuid4())
-    }
-
     valid_results = []
 
     # =====================================================
-    # MULTIPLE CHECKS
+    # MULTIPLE VERIFICATION CHECKS
     # =====================================================
 
     for _ in range(3):
+
+        payload = {
+            "placeId": PLACE_ID,
+            "gameId": server_id,
+            "gameJoinAttemptId": str(uuid.uuid4())
+        }
 
         try:
 
@@ -176,7 +176,7 @@ async def fetch_real_uptime(server_id):
                         "jobId"
                     )
 
-                    # Reject redirects
+                    # Reject redirected servers
                     if returned_job_id != server_id:
                         continue
 
@@ -200,7 +200,7 @@ async def fetch_real_uptime(server_id):
                         current_ms - claimed_time
                     ) // 1000
 
-                    # Reject impossible values
+                    # Reject impossible uptimes
                     if uptime < 0:
                         continue
 
@@ -214,7 +214,7 @@ async def fetch_real_uptime(server_id):
         except:
             pass
 
-        await asyncio.sleep(0.4)
+        await asyncio.sleep(0.35)
 
     # =====================================================
     # NO VALID RESULTS
@@ -224,7 +224,7 @@ async def fetch_real_uptime(server_id):
         return None
 
     # =====================================================
-    # USE MEDIAN RESULT
+    # MEDIAN FILTER
     # =====================================================
 
     valid_results.sort()
@@ -280,7 +280,7 @@ async def server_tracker():
         live_server_ids.add(server_id)
 
         # =================================================
-        # CREATE ENTRY
+        # NEW SERVER
         # =================================================
 
         if server_id not in server_database:
@@ -309,79 +309,81 @@ async def server_tracker():
                 f"[NEW] {server_id}"
             )
 
-else:
-
-    data = server_database[server_id]
-
-    elapsed = (
-        current_time
-        - data["last_check"]
-    )
-
-    predicted_uptime = (
-        data["uptime"] + elapsed
-    )
-
-    data["last_check"] = current_time
-
-    # =================================================
-    # FETCH VERIFIED UPTIME
-    # =================================================
-
-    real_uptime = await fetch_real_uptime(
-        server_id
-    )
-
-    if real_uptime is not None:
-
-        difference = abs(
-            real_uptime
-            - predicted_uptime
-        )
-
-        # =============================================
-        # ACCEPT SMALL DIFFERENCES
-        # =============================================
-
-        if difference <= 120:
-
-            data["uptime"] = real_uptime
-
-        # =============================================
-        # MEDIUM DIFFERENCE:
-        # SMOOTH CORRECTION
-        # =============================================
-
-        elif difference <= 600:
-
-            averaged = int(
-                (
-                    predicted_uptime
-                    + real_uptime
-                ) / 2
-            )
-
-            data["uptime"] = averaged
-
-        # =============================================
-        # MASSIVE DIFFERENCE:
-        # IGNORE ROBLOX RESPONSE
-        # =============================================
+        # =================================================
+        # EXISTING SERVER
+        # =================================================
 
         else:
 
-            data["uptime"] = predicted_uptime
+            data = server_database[server_id]
 
-            print(
-                f"[IGNORED BAD UPTIME] "
-                f"{server_id}"
+            elapsed = (
+                current_time
+                - data["last_check"]
             )
 
-    else:
+            predicted_uptime = (
+                data["uptime"] + elapsed
+            )
 
-        data["uptime"] = predicted_uptime
+            data["last_check"] = current_time
 
-    data["last_seen"] = current_time
+            # =================================================
+            # VERIFIED UPTIME CHECK
+            # =================================================
+
+            real_uptime = await fetch_real_uptime(
+                server_id
+            )
+
+            if real_uptime is not None:
+
+                difference = abs(
+                    real_uptime
+                    - predicted_uptime
+                )
+
+                # =============================================
+                # SMALL DIFFERENCE
+                # =============================================
+
+                if difference <= 120:
+
+                    data["uptime"] = real_uptime
+
+                # =============================================
+                # MEDIUM DIFFERENCE
+                # =============================================
+
+                elif difference <= 600:
+
+                    averaged = int(
+                        (
+                            predicted_uptime
+                            + real_uptime
+                        ) / 2
+                    )
+
+                    data["uptime"] = averaged
+
+                # =============================================
+                # MASSIVE DIFFERENCE
+                # =============================================
+
+                else:
+
+                    data["uptime"] = predicted_uptime
+
+                    print(
+                        f"[IGNORED BAD UPTIME] "
+                        f"{server_id}"
+                    )
+
+            else:
+
+                data["uptime"] = predicted_uptime
+
+            data["last_seen"] = current_time
 
         uptime = server_database[server_id]["uptime"]
 
