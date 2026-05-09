@@ -175,6 +175,22 @@ async def get_server_uptime(server_id):
 
                 data = await response.json()
 
+                # =================================================
+                # VERIFY SERVER MATCH
+                # =================================================
+
+                returned_job_id = data.get("jobId")
+
+                if returned_job_id != server_id:
+
+                    print(
+                        f"Server mismatch:"
+                        f" requested={server_id}"
+                        f" returned={returned_job_id}"
+                    )
+
+                    return None
+
                 join_script = data.get(
                     "joinScript",
                     {}
@@ -185,6 +201,12 @@ async def get_server_uptime(server_id):
                 )
 
                 if not claimed_time:
+
+                    print(
+                        f"No ServerClaimedTime "
+                        f"for {server_id}"
+                    )
+
                     return None
 
                 current_ms = int(
