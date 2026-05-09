@@ -101,7 +101,11 @@ async def fetch_servers():
     servers = []
     cursor = None
 
+    print("\n=== FETCHING SERVERS ===")
+
     async with aiohttp.ClientSession() as session:
+
+        page = 1
 
         while True:
 
@@ -110,13 +114,23 @@ async def fetch_servers():
             if cursor:
                 url += f"&cursor={cursor}"
 
+            print(f"[PAGE {page}] Requesting servers...")
+
             try:
 
                 async with session.get(url) as response:
 
+                    print(
+                        f"[PAGE {page}] "
+                        f"Status: {response.status}"
+                    )
+
                     if response.status == 429:
 
-                        print("Rate limited. Sleeping...")
+                        print(
+                            "[RATE LIMITED] "
+                            "Sleeping 10 seconds..."
+                        )
 
                         await asyncio.sleep(10)
 
@@ -124,25 +138,60 @@ async def fetch_servers():
 
                     if response.status != 200:
 
-                        print(f"API Error: {response.status}")
+                        print(
+                            f"[API ERROR] "
+                            f"{response.status}"
+                        )
 
                         break
 
                     data = await response.json()
 
-                    servers.extend(data.get("data", []))
+                    page_servers = data.get("data", [])
+
+                    print(
+                        f"[PAGE {page}] "
+                        f"Found {len(page_servers)} servers"
+                    )
+
+                    for s in page_servers:
+
+                        print(
+                            f"SERVER ID: {s.get('id')} | "
+                            f"Players: "
+                            f"{s.get('playing')}/"
+                            f"{s.get('maxPlayers')}"
+                        )
+
+                    servers.extend(page_servers)
 
                     cursor = data.get("nextPageCursor")
 
                     if not cursor:
+
+                        print(
+                            "[DONE] No more pages"
+                        )
+
                         break
+
+                    page += 1
 
                     await asyncio.sleep(0.5)
 
             except Exception as e:
 
-                print("Fetch Error:", e)
+                print(
+                    "[FETCH ERROR]",
+                    e
+                )
+
                 break
+
+    print(
+        f"=== TOTAL SERVERS: "
+        f"{len(servers)} ===\n"
+    )
 
     return servers
 
@@ -171,6 +220,8 @@ async def get_server_claimed_time(server_id):
 
     try:
 
+        print(f"[CLAIM REQUEST] {server_id}")
+
         async with aiohttp.ClientSession(
             cookies=cookies
         ) as session:
@@ -181,13 +232,13 @@ async def get_server_claimed_time(server_id):
                 headers=headers
             ) as response:
 
-                if response.status != 200:
+                print(
+                    f"[CLAIM RESPONSE] "
+                    f"{server_id} -> "
+                    f"{response.status}"
+                )
 
-                    print(
-                        f"Claimed Time Failed "
-                        f"{server_id} "
-                        f"{response.status}"
-                    )
+                if response.status != 200:
 
                     return None
 
@@ -196,6 +247,12 @@ async def get_server_claimed_time(server_id):
                 join_script = data.get("joinScript")
 
                 if not join_script:
+
+                    print(
+                        f"[NO JOIN SCRIPT] "
+                        f"{server_id}"
+                    )
+
                     return None
 
                 claimed_time = join_script.get(
@@ -203,20 +260,31 @@ async def get_server_claimed_time(server_id):
                 )
 
                 if not claimed_time:
+
+                    print(
+                        f"[NO CLAIMED TIME] "
+                        f"{server_id}"
+                    )
+
                     return None
 
                 claimed_time = int(claimed_time / 1000)
 
                 print(
                     f"[CLAIMED TIME] "
-                    f"{server_id} -> {claimed_time}"
+                    f"{server_id} -> "
+                    f"{claimed_time}"
                 )
 
                 return claimed_time
 
     except Exception as e:
 
-        print("Claimed Time Error:", e)
+        print(
+            "[CLAIM ERROR]",
+            server_id,
+            e
+        )
 
     return None
 
@@ -254,7 +322,12 @@ async def tracker():
 
     current_time = int(time.time())
 
-    print(f"\n[{datetime.utcnow()}] SCANNING")
+    print(
+        f"\n========== "
+        f"SCAN START "
+        f"{datetime.utcnow()} "
+        f"=========="
+    )
 
     servers = await fetch_servers()
 
@@ -302,6 +375,11 @@ async def tracker():
 
             }
 
+            print(
+                f"[TRACKING STARTED] "
+                f"{server_id}"
+            )
+
         else:
 
             server_database[server_id][
@@ -324,8 +402,11 @@ async def tracker():
             continue
 
         print(
-            f"{server_id} -> "
-            f"{format_time(uptime)}"
+            f"[TRACKING] "
+            f"{server_id} | "
+            f"Uptime: {format_time(uptime)} | "
+            f"Claimed: "
+            f"{server_database[server_id]['claimed_time']}"
         )
 
         join_link = (
@@ -354,22 +435,30 @@ async def tracker():
 
                 if channel:
 
+                    print(
+                        f"[SENDING RIFT ALERT] "
+                        f"{server_id}"
+                    )
+
                     await channel.send(
                         f"🌀 **Rift Soon**\n\n"
                         f"⏳ Spawns in "
                         f"`{format_time(remaining)}`\n"
                         f"🕒 Server Age "
                         f"`{format_time(uptime)}`\n"
+                        f"🆔 `{server_id}`\n"
                         f"🔗 {join_link}"
+                    )
+
+                else:
+
+                    print(
+                        "[RIFT CHANNEL NOT FOUND]"
                     )
 
                 server_database[server_id][
                     "rift_sent"
                 ].append(spawn_time)
-
-                print(
-                    f"[RIFT ALERT] {server_id}"
-                )
 
         # =================================================
         # BOSS ALERTS
@@ -391,22 +480,30 @@ async def tracker():
 
                 if channel:
 
+                    print(
+                        f"[SENDING BOSS ALERT] "
+                        f"{server_id}"
+                    )
+
                     await channel.send(
                         f"👹 **Boss Soon**\n\n"
                         f"⏳ Spawns in "
                         f"`{format_time(remaining)}`\n"
                         f"🕒 Server Age "
                         f"`{format_time(uptime)}`\n"
+                        f"🆔 `{server_id}`\n"
                         f"🔗 {join_link}"
+                    )
+
+                else:
+
+                    print(
+                        "[BOSS CHANNEL NOT FOUND]"
                     )
 
                 server_database[server_id][
                     "boss_sent"
                 ].append(spawn_time)
-
-                print(
-                    f"[BOSS ALERT] {server_id}"
-                )
 
     # =====================================================
     # CLEANUP
@@ -494,11 +591,22 @@ async def on_ready():
     print(f"Logged in as {bot.user}")
 
     try:
+
         await bot.tree.sync()
+
+        print("[SLASH COMMANDS SYNCED]")
+
     except Exception as e:
-        print("Slash Sync Error:", e)
+
+        print(
+            "[SLASH SYNC ERROR]",
+            e
+        )
 
     if not tracker.is_running():
+
+        print("[TRACKER STARTED]")
+
         tracker.start()
 
 # =========================================================
