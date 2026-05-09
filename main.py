@@ -40,9 +40,9 @@ DATA_FILE = "servers.json"
 RIFT_CHANNEL_ID = 1502236122615648326
 BOSS_CHANNEL_ID = 1502236106597470288
 
-MAX_SERVER_AGE = 172800  # 48h
+MAX_SERVER_AGE = 172800  # 48 hours
 
-# announce 5 minutes early
+# 5 minutes before spawn
 ANNOUNCE_EARLY = 300
 
 # =========================================================
@@ -77,7 +77,7 @@ def save_data():
 server_database = load_data()
 
 # =========================================================
-# SERVER API
+# ROBLOX API
 # =========================================================
 
 BASE_URL = (
@@ -131,7 +131,7 @@ async def fetch_servers():
     return servers
 
 # =========================================================
-# GET REAL SERVER CLAIMED TIME
+# GET CLAIMED TIME
 # =========================================================
 
 async def get_server_claimed_time(server_id):
@@ -170,10 +170,6 @@ async def get_server_claimed_time(server_id):
                     return None
 
                 if response.status != 200:
-                    print(
-                        f"Claimed Time Status: "
-                        f"{response.status}"
-                    )
                     return None
 
                 data = await response.json()
@@ -324,9 +320,7 @@ async def server_tracker():
 
         for spawn_time in RIFT_TIMES:
 
-            target_time = (
-                spawn_time - ANNOUNCE_EARLY
-            )
+            target_time = spawn_time - ANNOUNCE_EARLY
 
             if (
                 target_time <= uptime <
@@ -366,9 +360,7 @@ async def server_tracker():
 
         for spawn_time in BOSS_TIMES:
 
-            target_time = (
-                spawn_time - ANNOUNCE_EARLY
-            )
+            target_time = spawn_time - ANNOUNCE_EARLY
 
             if (
                 target_time <= uptime <
@@ -476,9 +468,11 @@ async def uptime(
     server_id: str
 ):
 
+    await interaction.response.defer()
+
     if server_id not in server_database:
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "❌ Server not tracked."
         )
 
@@ -491,7 +485,7 @@ async def uptime(
         ]
     )
 
-    await interaction.response.send_message(
+    await interaction.followup.send(
         f"⏱️ Uptime:\n"
         f"`{format_time(uptime_seconds)}`"
     )
