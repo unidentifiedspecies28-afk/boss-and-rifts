@@ -3,6 +3,7 @@ import time
 import json
 import asyncio
 import threading
+import uuid
 from datetime import datetime
 
 import aiohttp
@@ -29,12 +30,13 @@ def run_web():
 # =========================================================
 
 TOKEN = os.getenv("DISCORD_TOKEN")
+ROBLOX_COOKIE = os.getenv("ROBLOX_COOKIE")
 
 PLACE_ID = 13358463560
 CHECK_INTERVAL = 20
 DATA_FILE = "servers.json"
 
-# CHANGE THESE
+# PUT YOUR CHANNEL IDS HERE
 RIFT_CHANNEL_ID = 1502236122615648326
 BOSS_CHANNEL_ID = 1502236106597470288
 
@@ -70,12 +72,6 @@ def save_data():
 server_database = load_data()
 
 # =========================================================
-# IGNORE EXISTING SERVERS ON STARTUP
-# =========================================================
-
-FIRST_SCAN_COMPLETE = False
-
-# =========================================================
 # ROBLOX API
 # =========================================================
 
@@ -84,25 +80,20 @@ BASE_URL = (
     f"{PLACE_ID}/servers/Public?limit=100"
 )
 
+JOIN_URL = (
+    "https://gamejoin.roblox.com/v1/join-game-instance"
+)
+
+# =========================================================
+# FETCH PUBLIC SERVERS
+# =========================================================
+
 async def fetch_servers():
 
     servers = []
     cursor = None
 
-    ROBLOX_COOKIE = os.getenv("ROBLOX_COOKIE")
-
-    headers = {}
-
-    # Use authenticated Roblox session if provided
-    if ROBLOX_COOKIE:
-
-        headers["Cookie"] = (
-            f".ROBLOSECURITY={ROBLOX_COOKIE}"
-        )
-
-    async with aiohttp.ClientSession(
-        headers=headers
-    ) as session:
+    async with aiohttp.ClientSession() as session:
 
         while True:
 
@@ -118,12 +109,8 @@ async def fetch_servers():
                     if response.status != 200:
 
                         print(
-                            f"API Error: {response.status}"
+                            f"Public API Error: {response.status}"
                         )
-
-                        text = await response.text()
-
-                        print(text)
 
                         break
 
@@ -148,6 +135,83 @@ async def fetch_servers():
                 break
 
     return servers
+
+# =========================================================
+# GET REAL SERVER UPTIME
+# =========================================================
+
+async def get_server_uptime(server_id):
+
+    headers = {
+        "Cookie": f".ROBLOSECURITY={ROBLOX_COOKIE}",
+        "Content-Type": "application/json",
+        "User-Agent": "Roblox/WinInet"
+    }
+
+    payload = {
+        "placeId": PLACE_ID,
+        "gameId": server_id,
+        "gameJoinAttemptId": str(uuid.uuid4())
+    }
+
+    try:
+
+        async with aiohttp.ClientSession() as session:
+
+            async with session.post(
+                JOIN_URL,
+                headers=headers,
+                json=payload
+            ) as response:
+
+                if response.status != 200:
+
+                    print(
+                        f"Join API Error: {response.status}"
+                    )
+
+                    text = await response.text()
+                    print(text)
+
+                    return None
+
+                data = await response.json()
+
+                join_script = data.get(
+                    "joinScript",
+                    {}
+                )
+
+                claimed_time = join_script.get(
+                    "ServerClaimedTime"
+                )
+
+                if not claimed_time:
+
+                    print(
+                        f"No ServerClaimedTime for {server_id}"
+                    )
+
+                    return None
+
+                current_ms = int(
+                    time.time() * 1000
+                )
+
+                uptime_seconds = (
+                    current_ms - claimed_time
+                ) // 1000
+
+                return int(uptime_seconds)
+
+    except Exception as e:
+
+        print(
+            f"Uptime Fetch Error for {server_id}:",
+            e
+        )
+
+        return None
 
 # =========================================================
 # TIME FORMATTER
@@ -186,12 +250,12 @@ while boss <= 172800:
 @tasks.loop(seconds=CHECK_INTERVAL)
 async def server_tracker():
 
-    global server_database
-    global FIRST_SCAN_COMPLETE
-
     current_time = int(time.time())
 
-    print(f"[{datetime.utcnow()}] Scanning servers...")
+    print(
+        f"[{datetime.utcnow()}] "
+        f"Scanning servers..."
+    )
 
     servers = await fetch_servers()
 
@@ -203,47 +267,36 @@ async def server_tracker():
 
         live_servers.add(server_id)
 
-        # =================================================
-        # NEW SERVER
-        # =================================================
+        print(f"Checking server {server_id}")
 
-        if server_id not in server_database:
-
-            server_database[server_id] = {
-                "first_seen": current_time,
-                "last_seen": current_time,
-                "rift_announced": [],
-                "boss_announced": []
-            }
-
-            # Ignore startup servers
-            if FIRST_SCAN_COMPLETE:
-                print(f"[NEW SERVER] {server_id}")
-
-        else:
-
-            server_database[server_id]["last_seen"] = current_time
-
-        # =================================================
-        # SKIP INITIAL SERVERS
-        # =================================================
-
-        if not FIRST_SCAN_COMPLETE:
-            continue
-
-        # =================================================
-        # UPTIME
-        # =================================================
-
-        uptime = (
-            current_time
-            - server_database[server_id]["first_seen"]
+        uptime = await get_server_uptime(
+            server_id
         )
+
+        if uptime is None:
+            continue
 
         join_link = (
             f"https://www.roblox.com/games/start?"
             f"placeId={PLACE_ID}"
             f"&gameInstanceId={server_id}"
+        )
+
+        if server_id not in server_database:
+
+            server_database[server_id] = {
+                "rift_announced": [],
+                "boss_announced": [],
+                "last_seen": current_time
+            }
+
+            print(
+                f"[NEW SERVER] "
+                f"{server_id}"
+            )
+
+        server_database[server_id]["last_seen"] = (
+            current_time
         )
 
         # =================================================
@@ -254,25 +307,33 @@ async def server_tracker():
 
             if (
                 uptime >= milestone
-                and milestone not in server_database[server_id]["rift_announced"]
+                and milestone not in
+                server_database[server_id]["rift_announced"]
             ):
 
-                channel = bot.get_channel(RIFT_CHANNEL_ID)
+                channel = bot.get_channel(
+                    RIFT_CHANNEL_ID
+                )
 
                 if channel:
 
                     await channel.send(
                         f"🌀 **Rift Server Found**\n\n"
-                        f"⏱️ Uptime: `{format_time(milestone)}`\n"
-                        f"🆔 Server ID: `{server_id}`\n"
-                        f"🔗 Join:\n{join_link}"
+                        f"⏱️ Uptime: "
+                        f"`{format_time(uptime)}`\n"
+                        f"🆔 Server ID: "
+                        f"`{server_id}`\n"
+                        f"🔗 Join:\n"
+                        f"{join_link}"
                     )
 
-                server_database[server_id]["rift_announced"].append(milestone)
+                server_database[server_id][
+                    "rift_announced"
+                ].append(milestone)
 
                 print(
                     f"[RIFT] {server_id} "
-                    f"{format_time(milestone)}"
+                    f"{format_time(uptime)}"
                 )
 
         # =================================================
@@ -283,65 +344,42 @@ async def server_tracker():
 
             if (
                 uptime >= milestone
-                and milestone not in server_database[server_id]["boss_announced"]
+                and milestone not in
+                server_database[server_id]["boss_announced"]
             ):
 
-                channel = bot.get_channel(BOSS_CHANNEL_ID)
+                channel = bot.get_channel(
+                    BOSS_CHANNEL_ID
+                )
 
                 if channel:
 
                     await channel.send(
                         f"👹 **Boss Server Found**\n\n"
-                        f"⏱️ Uptime: `{format_time(milestone)}`\n"
-                        f"🆔 Server ID: `{server_id}`\n"
-                        f"🔗 Join:\n{join_link}"
+                        f"⏱️ Uptime: "
+                        f"`{format_time(uptime)}`\n"
+                        f"🆔 Server ID: "
+                        f"`{server_id}`\n"
+                        f"🔗 Join:\n"
+                        f"{join_link}"
                     )
 
-                server_database[server_id]["boss_announced"].append(milestone)
+                server_database[server_id][
+                    "boss_announced"
+                ].append(milestone)
 
                 print(
                     f"[BOSS] {server_id} "
-                    f"{format_time(milestone)}"
+                    f"{format_time(uptime)}"
                 )
-
-    # =====================================================
-    # REMOVE DEAD SERVERS
-    # =====================================================
-
-    dead_servers = []
-
-    for server_id, data in server_database.items():
-
-        if server_id not in live_servers:
-
-            if current_time - data["last_seen"] > CHECK_INTERVAL * 2:
-
-                uptime = (
-                    data["last_seen"]
-                    - data["first_seen"]
-                )
-
-                print(
-                    f"[CLOSED] {server_id} "
-                    f"after {format_time(uptime)}"
-                )
-
-                dead_servers.append(server_id)
-
-    for dead in dead_servers:
-        del server_database[dead]
 
     save_data()
 
-    # =====================================================
-    # FIRST SCAN COMPLETE
-    # =====================================================
-
-    if not FIRST_SCAN_COMPLETE:
-        FIRST_SCAN_COMPLETE = True
-        print("Initial scan complete.")
-
-    print(f"Tracking {len(live_servers)} live servers")
+    print(
+        f"Tracking "
+        f"{len(live_servers)} "
+        f"live servers"
+    )
 
 # =========================================================
 # SLASH COMMANDS
@@ -351,44 +389,12 @@ async def server_tracker():
     name="ping",
     description="Check if the bot is online"
 )
-async def ping(interaction: discord.Interaction):
-
-    await interaction.response.send_message("🏓 Pong!")
-
-@bot.tree.command(
-    name="tracked",
-    description="Show tracked server count"
-)
-async def tracked(interaction: discord.Interaction):
-
-    await interaction.response.send_message(
-        f"Tracking `{len(server_database)}` servers."
-    )
-
-@bot.tree.command(
-    name="uptime",
-    description="Check Roblox server uptime"
-)
-async def uptime(
-    interaction: discord.Interaction,
-    server_id: str
+async def ping(
+    interaction: discord.Interaction
 ):
 
-    if server_id not in server_database:
-
-        await interaction.response.send_message(
-            "❌ Server not tracked."
-        )
-
-        return
-
-    uptime_seconds = (
-        int(time.time())
-        - server_database[server_id]["first_seen"]
-    )
-
     await interaction.response.send_message(
-        f"⏱️ Uptime: `{format_time(uptime_seconds)}`"
+        "🏓 Pong!"
     )
 
 # =========================================================
@@ -400,7 +406,9 @@ async def on_ready():
 
     await bot.tree.sync()
 
-    print(f"Logged in as {bot.user}")
+    print(
+        f"Logged in as {bot.user}"
+    )
 
     if not server_tracker.is_running():
         server_tracker.start()
@@ -409,6 +417,8 @@ async def on_ready():
 # START EVERYTHING
 # =========================================================
 
-threading.Thread(target=run_web).start()
+threading.Thread(
+    target=run_web
+).start()
 
 bot.run(TOKEN)
