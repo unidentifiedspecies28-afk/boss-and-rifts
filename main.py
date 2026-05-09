@@ -156,6 +156,10 @@ async def get_server_claimed_time(server_id):
             ) as response:
 
                 if response.status != 200:
+                    print(
+                        f"Claimed Time Error "
+                        f"{server_id}: {response.status}"
+                    )
                     return None
 
                 data = await response.json()
@@ -204,6 +208,16 @@ boss = 7200
 while boss <= MAX_SERVER_AGE:
     BOSS_TIMES.append(boss)
     boss += 7200
+
+# =========================================================
+# ALERT SETTINGS
+# =========================================================
+
+# 5 minutes before spawn
+ALERT_BEFORE = 300
+
+# allow small timing window
+WINDOW = 5
 
 # =========================================================
 # TRACKER
@@ -293,7 +307,9 @@ async def server_tracker():
             remaining = spawn_time - uptime
 
             if (
-                -2 <= remaining <= 2
+                ALERT_BEFORE - WINDOW
+                <= remaining
+                <= ALERT_BEFORE + WINDOW
                 and spawn_time not in
                 server_database[server_id]["rift_sent"]
             ):
@@ -305,11 +321,11 @@ async def server_tracker():
                 if channel:
 
                     await channel.send(
-                        f"🌀 **Rift Spawn**\n\n"
+                        f"🌀 **Rift Spawning Soon**\n\n"
                         f"⏱️ Server Age: "
                         f"`{format_time(uptime)}`\n"
-                        f"🎯 Rift Time: "
-                        f"`{format_time(spawn_time)}`\n"
+                        f"🎯 Rift Spawns In: "
+                        f"`{format_time(remaining)}`\n"
                         f"🆔 `{server_id}`\n"
                         f"🔗 {join_link}"
                     )
@@ -319,7 +335,7 @@ async def server_tracker():
                 ].append(spawn_time)
 
                 print(
-                    f"[RIFT] {server_id} "
+                    f"[RIFT ALERT] {server_id} "
                     f"{format_time(spawn_time)}"
                 )
 
@@ -332,7 +348,9 @@ async def server_tracker():
             remaining = spawn_time - uptime
 
             if (
-                -2 <= remaining <= 2
+                ALERT_BEFORE - WINDOW
+                <= remaining
+                <= ALERT_BEFORE + WINDOW
                 and spawn_time not in
                 server_database[server_id]["boss_sent"]
             ):
@@ -344,11 +362,11 @@ async def server_tracker():
                 if channel:
 
                     await channel.send(
-                        f"👹 **Boss Spawn**\n\n"
+                        f"👹 **Boss Spawning Soon**\n\n"
                         f"⏱️ Server Age: "
                         f"`{format_time(uptime)}`\n"
-                        f"🎯 Boss Time: "
-                        f"`{format_time(spawn_time)}`\n"
+                        f"🎯 Boss Spawns In: "
+                        f"`{format_time(remaining)}`\n"
                         f"🆔 `{server_id}`\n"
                         f"🔗 {join_link}"
                     )
@@ -358,7 +376,7 @@ async def server_tracker():
                 ].append(spawn_time)
 
                 print(
-                    f"[BOSS] {server_id} "
+                    f"[BOSS ALERT] {server_id} "
                     f"{format_time(spawn_time)}"
                 )
 
