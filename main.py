@@ -33,7 +33,7 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 ROBLOX_COOKIE = os.getenv("ROBLOX_COOKIE")
 
 PLACE_ID = 13358463560
-CHECK_INTERVAL = 20
+CHECK_INTERVAL = 30
 
 DATA_FILE = "servers.json"
 
@@ -74,7 +74,7 @@ def save_data():
 server_database = load_data()
 
 # =========================================================
-# ROBLOX URLS
+# URLS
 # =========================================================
 
 BASE_URL = (
@@ -132,7 +132,7 @@ async def fetch_servers():
     return servers
 
 # =========================================================
-# REAL UPTIME
+# VERIFIED UPTIME
 # =========================================================
 
 async def fetch_real_uptime(server_id):
@@ -145,11 +145,7 @@ async def fetch_real_uptime(server_id):
 
     valid_results = []
 
-    # =====================================================
-    # MULTIPLE VERIFICATION CHECKS
-    # =====================================================
-
-    for _ in range(3):
+    for _ in range(5):
 
         payload = {
             "placeId": PLACE_ID,
@@ -176,7 +172,7 @@ async def fetch_real_uptime(server_id):
                         "jobId"
                     )
 
-                    # Reject redirected servers
+                    # Reject redirects
                     if returned_job_id != server_id:
                         continue
 
@@ -200,7 +196,7 @@ async def fetch_real_uptime(server_id):
                         current_ms - claimed_time
                     ) // 1000
 
-                    # Reject impossible uptimes
+                    # Impossible values
                     if uptime < 0:
                         continue
 
@@ -214,17 +210,17 @@ async def fetch_real_uptime(server_id):
         except:
             pass
 
-        await asyncio.sleep(0.35)
+        await asyncio.sleep(0.25)
 
     # =====================================================
     # NO VALID RESULTS
     # =====================================================
 
-    if not valid_results:
+    if len(valid_results) < 2:
         return None
 
     # =====================================================
-    # MEDIAN FILTER
+    # REMOVE OUTLIERS
     # =====================================================
 
     valid_results.sort()
@@ -233,7 +229,21 @@ async def fetch_real_uptime(server_id):
         len(valid_results) // 2
     ]
 
-    return median
+    filtered = []
+
+    for value in valid_results:
+
+        if abs(value - median) <= 180:
+            filtered.append(value)
+
+    if not filtered:
+        return None
+
+    final_uptime = int(
+        sum(filtered) / len(filtered)
+    )
+
+    return final_uptime
 
 # =========================================================
 # FORMAT TIME
@@ -298,6 +308,8 @@ async def server_tracker():
 
                 "last_check": current_time,
 
+                "last_real_check": current_time,
+
                 "rift_sent": [],
 
                 "boss_sent": [],
@@ -322,70 +334,64 @@ async def server_tracker():
                 - data["last_check"]
             )
 
-            predicted_uptime = (
-                data["uptime"] + elapsed
-            )
+            # Natural progression
+            data["uptime"] += elapsed
 
             data["last_check"] = current_time
 
             # =================================================
-            # VERIFIED UPTIME CHECK
+            # ONLY RESYNC EVERY 10 MINUTES
             # =================================================
 
-            real_uptime = await fetch_real_uptime(
-                server_id
-            )
+            if (
+                current_time
+                - data["last_real_check"]
+            ) >= 600:
 
-            if real_uptime is not None:
-
-                difference = abs(
-                    real_uptime
-                    - predicted_uptime
+                real_uptime = await fetch_real_uptime(
+                    server_id
                 )
 
-                # =============================================
-                # SMALL DIFFERENCE
-                # =============================================
+                if real_uptime is not None:
 
-                if difference <= 120:
+                    predicted = data["uptime"]
 
-                    data["uptime"] = real_uptime
-
-                # =============================================
-                # MEDIUM DIFFERENCE
-                # =============================================
-
-                elif difference <= 600:
-
-                    averaged = int(
-                        (
-                            predicted_uptime
-                            + real_uptime
-                        ) / 2
+                    difference = abs(
+                        real_uptime
+                        - predicted
                     )
 
-                    data["uptime"] = averaged
+                    # Small correction
+                    if difference <= 180:
 
-                # =============================================
-                # MASSIVE DIFFERENCE
-                # =============================================
+                        data["uptime"] = real_uptime
 
-                else:
+                    # Medium correction
+                    elif difference <= 600:
 
-                    data["uptime"] = predicted_uptime
+                        data["uptime"] = int(
+                            (
+                                predicted
+                                + real_uptime
+                            ) / 2
+                        )
 
-                    print(
-                        f"[IGNORED BAD UPTIME] "
-                        f"{server_id}"
-                    )
+                    # Huge difference:
+                    # ignore bad Roblox response
+                    else:
 
-            else:
+                        print(
+                            f"[BAD DATA IGNORED] "
+                            f"{server_id}"
+                        )
 
-                data["uptime"] = predicted_uptime
+                data["last_real_check"] = current_time
 
             data["last_seen"] = current_time
 
-        uptime = server_database[server_id]["uptime"]
+        uptime = int(
+            server_database[server_id]["uptime"]
+        )
 
         join_link = (
             f"https://www.roblox.com/games/start?"
@@ -394,14 +400,22 @@ async def server_tracker():
         )
 
         # =================================================
-        # RIFTS
+        # NEXT EVENTS
         # =================================================
 
         next_rift = (
-            (
-                uptime // RIFT_INTERVAL
-            ) + 1
-        ) * RIFT_INTERVAL
+            ((uptime // RIFT_INTERVAL) + 1)
+            * RIFT_INTERVAL
+        )
+
+        next_boss = (
+            ((uptime // BOSS_INTERVAL) + 1)
+            * BOSS_INTERVAL
+        )
+
+        # =================================================
+        # RIFT ALERT
+        # =================================================
 
         rift_warning_time = (
             next_rift - RIFT_WARNING
@@ -412,8 +426,11 @@ async def server_tracker():
             and uptime < next_rift
         ):
 
+            # DUPLICATE PREVENTION
+            unique_id = f"{server_id}_{next_rift}"
+
             if (
-                next_rift
+                unique_id
                 not in server_database[server_id]["rift_sent"]
             ):
 
@@ -438,18 +455,12 @@ async def server_tracker():
                     )
 
                 server_database[server_id]["rift_sent"].append(
-                    next_rift
+                    unique_id
                 )
 
         # =================================================
-        # BOSSES
+        # BOSS ALERT
         # =================================================
-
-        next_boss = (
-            (
-                uptime // BOSS_INTERVAL
-            ) + 1
-        ) * BOSS_INTERVAL
 
         boss_warning_time = (
             next_boss - BOSS_WARNING
@@ -460,8 +471,11 @@ async def server_tracker():
             and uptime < next_boss
         ):
 
+            # DUPLICATE PREVENTION
+            unique_id = f"{server_id}_{next_boss}"
+
             if (
-                next_boss
+                unique_id
                 not in server_database[server_id]["boss_sent"]
             ):
 
@@ -486,7 +500,7 @@ async def server_tracker():
                     )
 
                 server_database[server_id]["boss_sent"].append(
-                    next_boss
+                    unique_id
                 )
 
     # =====================================================
@@ -495,7 +509,7 @@ async def server_tracker():
 
     remove_list = []
 
-    for saved_server_id in server_database:
+    for saved_server_id in list(server_database.keys()):
 
         if saved_server_id not in live_server_ids:
 
@@ -519,6 +533,10 @@ async def server_tracker():
 
     save_data()
 
+    print(
+        f"Tracking {len(server_database)} servers"
+    )
+
 # =========================================================
 # SLASH COMMANDS
 # =========================================================
@@ -533,6 +551,18 @@ async def ping(
 
     await interaction.response.send_message(
         "🏓 Pong!"
+    )
+
+@bot.tree.command(
+    name="tracked",
+    description="Tracked server count"
+)
+async def tracked(
+    interaction: discord.Interaction
+):
+
+    await interaction.response.send_message(
+        f"Tracking {len(server_database)} servers."
     )
 
 # =========================================================
