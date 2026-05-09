@@ -18,7 +18,7 @@ app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "Roblox Tracker Bot Online"
+    return "Tracker Online"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -39,8 +39,9 @@ DATA_FILE = "servers.json"
 RIFT_CHANNEL_ID = 1502236122615648326
 BOSS_CHANNEL_ID = 1502236106597470288
 
-MAX_SERVER_AGE = 172800  # 48 hours
-EARLY_WARNING = 300      # 5 minutes early
+MAX_SERVER_AGE = 172800
+
+EARLY_WARNING = 300
 
 # =========================================================
 # DISCORD
@@ -74,7 +75,7 @@ def save_data():
 server_database = load_data()
 
 # =========================================================
-# ROBLOX SERVER API
+# SERVER API
 # =========================================================
 
 BASE_URL = (
@@ -82,15 +83,17 @@ BASE_URL = (
     f"{PLACE_ID}/servers/Public?limit=100"
 )
 
+HEADERS = {
+    "User-Agent": "Mozilla/5.0"
+}
+
 async def fetch_servers():
 
     servers = []
     cursor = None
 
-    timeout = aiohttp.ClientTimeout(total=20)
-
     async with aiohttp.ClientSession(
-        timeout=timeout
+        headers=HEADERS
     ) as session:
 
         while True:
@@ -105,19 +108,25 @@ async def fetch_servers():
                 async with session.get(url) as response:
 
                     if response.status == 429:
+
                         print("RATE LIMITED")
-                        await asyncio.sleep(5)
+                        await asyncio.sleep(15)
                         break
 
                     if response.status != 200:
-                        print(f"API Error: {response.status}")
+
+                        print(
+                            f"API Error: "
+                            f"{response.status}"
+                        )
+
                         break
 
                     data = await response.json()
 
-                    servers.extend(
-                        data.get("data", [])
-                    )
+                    batch = data.get("data", [])
+
+                    servers.extend(batch)
 
                     cursor = data.get(
                         "nextPageCursor"
@@ -126,16 +135,17 @@ async def fetch_servers():
                     if not cursor:
                         break
 
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(0.25)
 
             except Exception as e:
+
                 print("Fetch Error:", e)
                 break
 
     return servers
 
 # =========================================================
-# GET REAL CLAIMED TIME
+# GET CLAIMED TIME
 # =========================================================
 
 async def get_server_claimed_time(server_id):
@@ -148,11 +158,7 @@ async def get_server_claimed_time(server_id):
     payload = {
         "placeId": PLACE_ID,
         "gameId": server_id,
-        "gameJoinAttemptId": str(server_id)
-    }
-
-    cookies = {
-        ".ROBLOSECURITY": ROBLOX_COOKIE
+        "gameJoinAttemptId": server_id
     }
 
     headers = {
@@ -160,37 +166,46 @@ async def get_server_claimed_time(server_id):
         "Referer": (
             f"https://www.roblox.com/games/"
             f"{PLACE_ID}/"
-        )
+        ),
+        "Origin": "https://www.roblox.com",
+        "User-Agent": "Mozilla/5.0"
     }
 
-    timeout = aiohttp.ClientTimeout(total=20)
+    cookies = {
+        ".ROBLOSECURITY": ROBLOX_COOKIE
+    }
 
     try:
 
         async with aiohttp.ClientSession(
-            cookies=cookies,
-            timeout=timeout
+            headers=headers,
+            cookies=cookies
         ) as session:
 
             async with session.post(
                 url,
-                json=payload,
-                headers=headers
+                json=payload
             ) as response:
 
                 if response.status == 429:
+
                     print(
-                        f"429 CLAIMED TIME {server_id}"
+                        f"CLAIMED TIME "
+                        f"RATE LIMITED"
                     )
+
                     return None
 
                 if response.status != 200:
+
+                    print(
+                        f"Claimed Time Error: "
+                        f"{response.status}"
+                    )
+
                     return None
 
                 data = await response.json()
-
-                if not data:
-                    return None
 
                 join_script = data.get(
                     "joinScript"
@@ -203,15 +218,16 @@ async def get_server_claimed_time(server_id):
                     "ServerClaimedTime"
                 )
 
-                if claimed_time:
-                    return int(
-                        claimed_time / 1000
-                    )
+                if not claimed_time:
+                    return None
+
+                return int(
+                    claimed_time / 1000
+                )
 
     except Exception as e:
-        print(
-            f"Claimed Time Error: {e}"
-        )
+
+        print("Claimed Error:", e)
 
     return None
 
@@ -241,12 +257,14 @@ BOSS_TIMES = []
 rift = 5400
 
 while rift <= MAX_SERVER_AGE:
+
     RIFT_TIMES.append(rift)
     rift += 5400
 
 boss = 7200
 
 while boss <= MAX_SERVER_AGE:
+
     BOSS_TIMES.append(boss)
     boss += 7200
 
@@ -262,15 +280,15 @@ async def server_tracker():
     current_time = int(time.time())
 
     print(
-        f"[{datetime.utcnow()}] "
-        f"Scanning servers..."
+        f"\n[{datetime.utcnow()}] "
+        f"Scanning..."
     )
 
     servers = await fetch_servers()
 
-    if not servers:
-        print("No servers found.")
-        return
+    print(
+        f"Found {len(servers)} servers"
+    )
 
     live_servers = set()
 
@@ -286,35 +304,25 @@ async def server_tracker():
 
         if server_id not in server_database:
 
+            print(
+                f"Fetching uptime for "
+                f"{server_id}"
+            )
+
             claimed_time = (
                 await get_server_claimed_time(
                     server_id
                 )
             )
 
-            # fallback if request fails
             if not claimed_time:
 
-                created = server.get("created")
+                print(
+                    f"Failed uptime "
+                    f"{server_id}"
+                )
 
-                if created:
-
-                    try:
-
-                        claimed_time = int(
-                            datetime.fromisoformat(
-                                created.replace(
-                                    "Z",
-                                    "+00:00"
-                                )
-                            ).timestamp()
-                        )
-
-                    except:
-                        claimed_time = current_time
-
-                else:
-                    claimed_time = current_time
+                continue
 
             server_database[server_id] = {
                 "claimed_time": claimed_time,
@@ -323,15 +331,20 @@ async def server_tracker():
                 "boss_sent": []
             }
 
-            uptime_now = (
-                current_time - claimed_time
+            uptime = (
+                current_time
+                - claimed_time
             )
 
             print(
-                f"[NEW SERVER] "
+                f"NEW SERVER "
                 f"{server_id} | "
-                f"{format_time(uptime_now)}"
+                f"{format_time(uptime)}"
             )
+
+            save_data()
+
+            await asyncio.sleep(1)
 
         else:
 
@@ -343,11 +356,15 @@ async def server_tracker():
         # UPTIME
         # =================================================
 
-        uptime = (
-            current_time
-            - server_database[server_id][
+        claimed_time = (
+            server_database[server_id][
                 "claimed_time"
             ]
+        )
+
+        uptime = (
+            current_time
+            - claimed_time
         )
 
         if uptime < 0:
@@ -372,50 +389,50 @@ async def server_tracker():
 
         for spawn_time in RIFT_TIMES:
 
-            alert_time = (
-                spawn_time - EARLY_WARNING
-            )
-
-            remaining = (
-                alert_time - uptime
+            warning_time = (
+                spawn_time
+                - EARLY_WARNING
             )
 
             if (
-                -60 <= remaining <= 60
-                and spawn_time not in
-                server_database[server_id][
-                    "rift_sent"
-                ]
+                warning_time
+                <= uptime
+                <= warning_time + CHECK_INTERVAL
             ):
 
-                channel = bot.get_channel(
-                    RIFT_CHANNEL_ID
-                )
+                if (
+                    spawn_time not in
+                    server_database[server_id][
+                        "rift_sent"
+                    ]
+                ):
 
-                if channel:
-
-                    real_remaining = (
-                        spawn_time - uptime
+                    channel = bot.get_channel(
+                        RIFT_CHANNEL_ID
                     )
 
-                    await channel.send(
-                        f"🌀 **RIFT IN 5 MINUTES**\n\n"
-                        f"⏱️ Server Age: "
-                        f"`{format_time(uptime)}`\n"
-                        f"⌛ Rift Spawns In: "
-                        f"`{format_time(real_remaining)}`\n"
-                        f"🆔 `{server_id}`\n"
-                        f"🔗 {join_link}"
-                    )
+                    if channel:
 
-                server_database[server_id][
-                    "rift_sent"
-                ].append(spawn_time)
+                        await channel.send(
+                            f"🌀 **RIFT IN 5 MINUTES**\n\n"
+                            f"⏱️ Server Age:\n"
+                            f"`{format_time(uptime)}`\n\n"
+                            f"🎯 Rift Spawn:\n"
+                            f"`{format_time(spawn_time)}`\n\n"
+                            f"🆔 `{server_id}`\n\n"
+                            f"🔗 {join_link}"
+                        )
 
-                print(
-                    f"[RIFT ALERT] "
-                    f"{server_id}"
-                )
+                        print(
+                            f"RIFT SENT "
+                            f"{server_id}"
+                        )
+
+                    server_database[
+                        server_id
+                    ][
+                        "rift_sent"
+                    ].append(spawn_time)
 
         # =================================================
         # BOSS ALERTS
@@ -423,55 +440,53 @@ async def server_tracker():
 
         for spawn_time in BOSS_TIMES:
 
-            alert_time = (
-                spawn_time - EARLY_WARNING
-            )
-
-            remaining = (
-                alert_time - uptime
+            warning_time = (
+                spawn_time
+                - EARLY_WARNING
             )
 
             if (
-                -60 <= remaining <= 60
-                and spawn_time not in
-                server_database[server_id][
-                    "boss_sent"
-                ]
+                warning_time
+                <= uptime
+                <= warning_time + CHECK_INTERVAL
             ):
 
-                channel = bot.get_channel(
-                    BOSS_CHANNEL_ID
-                )
+                if (
+                    spawn_time not in
+                    server_database[server_id][
+                        "boss_sent"
+                    ]
+                ):
 
-                if channel:
-
-                    real_remaining = (
-                        spawn_time - uptime
+                    channel = bot.get_channel(
+                        BOSS_CHANNEL_ID
                     )
 
-                    await channel.send(
-                        f"👹 **BOSS IN 5 MINUTES**\n\n"
-                        f"⏱️ Server Age: "
-                        f"`{format_time(uptime)}`\n"
-                        f"⌛ Boss Spawns In: "
-                        f"`{format_time(real_remaining)}`\n"
-                        f"🆔 `{server_id}`\n"
-                        f"🔗 {join_link}"
-                    )
+                    if channel:
 
-                server_database[server_id][
-                    "boss_sent"
-                ].append(spawn_time)
+                        await channel.send(
+                            f"👹 **BOSS IN 5 MINUTES**\n\n"
+                            f"⏱️ Server Age:\n"
+                            f"`{format_time(uptime)}`\n\n"
+                            f"🎯 Boss Spawn:\n"
+                            f"`{format_time(spawn_time)}`\n\n"
+                            f"🆔 `{server_id}`\n\n"
+                            f"🔗 {join_link}"
+                        )
 
-                print(
-                    f"[BOSS ALERT] "
-                    f"{server_id}"
-                )
+                        print(
+                            f"BOSS SENT "
+                            f"{server_id}"
+                        )
 
-        await asyncio.sleep(0.25)
+                    server_database[
+                        server_id
+                    ][
+                        "boss_sent"
+                    ].append(spawn_time)
 
     # =====================================================
-    # REMOVE DEAD SERVERS
+    # CLEANUP
     # =====================================================
 
     dead_servers = []
@@ -483,25 +498,20 @@ async def server_tracker():
             if (
                 current_time
                 - data["last_seen"]
-                > 600
+                > 1800
             ):
 
-                dead_servers.append(server_id)
+                dead_servers.append(
+                    server_id
+                )
 
-        else:
+    for server_id in dead_servers:
 
-            uptime = (
-                current_time
-                - data["claimed_time"]
-            )
+        del server_database[server_id]
 
-            if uptime > MAX_SERVER_AGE:
-                dead_servers.append(server_id)
-
-    for dead in dead_servers:
-
-        if dead in server_database:
-            del server_database[dead]
+        print(
+            f"REMOVED {server_id}"
+        )
 
     save_data()
 
@@ -516,9 +526,11 @@ async def server_tracker():
 
 @bot.tree.command(
     name="ping",
-    description="Check bot status"
+    description="Ping"
 )
-async def ping(interaction: discord.Interaction):
+async def ping(
+    interaction: discord.Interaction
+):
 
     await interaction.response.send_message(
         "🏓 Pong!"
@@ -528,43 +540,13 @@ async def ping(interaction: discord.Interaction):
     name="tracked",
     description="Tracked servers"
 )
-async def tracked(interaction: discord.Interaction):
+async def tracked(
+    interaction: discord.Interaction
+):
 
     await interaction.response.send_message(
         f"Tracking "
-        f"`{len(server_database)}` "
-        f"servers."
-    )
-
-@bot.tree.command(
-    name="uptime",
-    description="Check server uptime"
-)
-async def uptime(
-    interaction: discord.Interaction,
-    server_id: str
-):
-
-    await interaction.response.defer()
-
-    if server_id not in server_database:
-
-        await interaction.followup.send(
-            "❌ Server not tracked."
-        )
-
-        return
-
-    uptime_seconds = (
-        int(time.time())
-        - server_database[server_id][
-            "claimed_time"
-        ]
-    )
-
-    await interaction.followup.send(
-        f"⏱️ Uptime: "
-        f"`{format_time(uptime_seconds)}`"
+        f"{len(server_database)} servers"
     )
 
 # =========================================================
@@ -578,15 +560,19 @@ async def on_ready():
 
     try:
 
-        await bot.tree.sync()
+        synced = await bot.tree.sync()
 
-        print("Slash commands synced")
+        print(
+            f"Synced "
+            f"{len(synced)} commands"
+        )
 
     except Exception as e:
 
         print("Sync Error:", e)
 
     if not server_tracker.is_running():
+
         server_tracker.start()
 
 # =========================================================
