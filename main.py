@@ -89,7 +89,20 @@ async def fetch_servers():
     servers = []
     cursor = None
 
-    async with aiohttp.ClientSession() as session:
+    ROBLOX_COOKIE = os.getenv("ROBLOX_COOKIE")
+
+    headers = {}
+
+    # Use authenticated Roblox session if provided
+    if ROBLOX_COOKIE:
+
+        headers["Cookie"] = (
+            f".ROBLOSECURITY={ROBLOX_COOKIE}"
+        )
+
+    async with aiohttp.ClientSession(
+        headers=headers
+    ) as session:
 
         while True:
 
@@ -103,14 +116,26 @@ async def fetch_servers():
                 async with session.get(url) as response:
 
                     if response.status != 200:
-                        print(f"API Error: {response.status}")
+
+                        print(
+                            f"API Error: {response.status}"
+                        )
+
+                        text = await response.text()
+
+                        print(text)
+
                         break
 
                     data = await response.json()
 
-                    servers.extend(data.get("data", []))
+                    servers.extend(
+                        data.get("data", [])
+                    )
 
-                    cursor = data.get("nextPageCursor")
+                    cursor = data.get(
+                        "nextPageCursor"
+                    )
 
                     if not cursor:
                         break
@@ -118,6 +143,7 @@ async def fetch_servers():
                     await asyncio.sleep(0.15)
 
             except Exception as e:
+
                 print("Fetch Error:", e)
                 break
 
