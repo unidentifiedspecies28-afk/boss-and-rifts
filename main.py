@@ -3,7 +3,6 @@ import time
 import json
 import asyncio
 import threading
-import uuid
 from datetime import datetime
 
 import aiohttp
@@ -12,7 +11,7 @@ from discord.ext import commands, tasks
 from flask import Flask
 
 # =========================================================
-# WEB SERVER
+# WEB SERVER (RENDER)
 # =========================================================
 
 app = Flask(__name__)
@@ -40,10 +39,10 @@ DATA_FILE = "servers.json"
 RIFT_CHANNEL_ID = 1502236122615648326
 BOSS_CHANNEL_ID = 1502236106597470288
 
-MAX_SERVER_AGE = 172800  # 48 hours
+MAX_SERVER_AGE = 172800  # 48h
 
-# 5 minutes before spawn
-ANNOUNCE_EARLY = 300
+# SEND ALERT 5 MINUTES EARLY
+EARLY_TIME = 300
 
 # =========================================================
 # DISCORD
@@ -90,7 +89,9 @@ async def fetch_servers():
     servers = []
     cursor = None
 
-    async with aiohttp.ClientSession() as session:
+    timeout = aiohttp.ClientTimeout(total=20)
+
+    async with aiohttp.ClientSession(timeout=timeout) as session:
 
         while True:
 
@@ -104,9 +105,8 @@ async def fetch_servers():
                 async with session.get(url) as response:
 
                     if response.status == 429:
-
-                        print("Rate limited (429)")
-                        await asyncio.sleep(10)
+                        print("RATE LIMITED (429)")
+                        await asyncio.sleep(5)
                         break
 
                     if response.status != 200:
@@ -122,7 +122,7 @@ async def fetch_servers():
                     if not cursor:
                         break
 
-                    await asyncio.sleep(0.25)
+                    await asyncio.sleep(0.5)
 
             except Exception as e:
                 print("Fetch Error:", e)
@@ -131,7 +131,7 @@ async def fetch_servers():
     return servers
 
 # =========================================================
-# GET CLAIMED TIME
+# GET REAL SERVER CLAIMED TIME
 # =========================================================
 
 async def get_server_claimed_time(server_id):
@@ -141,7 +141,7 @@ async def get_server_claimed_time(server_id):
     payload = {
         "placeId": PLACE_ID,
         "gameId": server_id,
-        "gameJoinAttemptId": str(uuid.uuid4())
+        "gameJoinAttemptId": server_id
     }
 
     cookies = {
@@ -153,10 +153,13 @@ async def get_server_claimed_time(server_id):
         "Referer": f"https://www.roblox.com/games/{PLACE_ID}/"
     }
 
+    timeout = aiohttp.ClientTimeout(total=20)
+
     try:
 
         async with aiohttp.ClientSession(
-            cookies=cookies
+            cookies=cookies,
+            timeout=timeout
         ) as session:
 
             async with session.post(
@@ -166,10 +169,15 @@ async def get_server_claimed_time(server_id):
             ) as response:
 
                 if response.status == 429:
-                    print("Claimed time rate limited")
+                    print(f"429 ON CLAIMED TIME {server_id}")
                     return None
 
                 if response.status != 200:
+                    print(
+                        f"Claimed time failed "
+                        f"{server_id} "
+                        f"{response.status}"
+                    )
                     return None
 
                 data = await response.json()
@@ -195,7 +203,7 @@ async def get_server_claimed_time(server_id):
     return None
 
 # =========================================================
-# TIME FORMATTER
+# FORMAT TIME
 # =========================================================
 
 def format_time(seconds):
@@ -241,7 +249,7 @@ async def server_tracker():
     servers = await fetch_servers()
 
     if not servers:
-        print("No servers fetched.")
+        print("No servers found.")
         return
 
     live_servers = set()
@@ -263,11 +271,21 @@ async def server_tracker():
             )
 
             if not claimed_time:
-                print(
-                    f"[SKIPPED] {server_id} "
-                    f"(no claimed time)"
-                )
-                continue
+
+                # fallback ONLY if roblox blocks request
+                created = server.get("created")
+
+                if created:
+                    try:
+                        claimed_time = int(
+                            datetime.fromisoformat(
+                                created.replace("Z", "+00:00")
+                            ).timestamp()
+                        )
+                    except:
+                        claimed_time = current_time
+                else:
+                    claimed_time = current_time
 
             server_database[server_id] = {
                 "claimed_time": claimed_time,
@@ -276,12 +294,13 @@ async def server_tracker():
                 "boss_sent": []
             }
 
-            print(
-                f"[NEW SERVER] {server_id} "
-                f"Claimed: {claimed_time}"
-            )
+            uptime_now = current_time - claimed_time
 
-            await asyncio.sleep(0.5)
+            print(
+                f"[NEW SERVER] "
+                f"{server_id} | "
+                f"UPTIME: {format_time(uptime_now)}"
+            )
 
         else:
 
@@ -320,11 +339,12 @@ async def server_tracker():
 
         for spawn_time in RIFT_TIMES:
 
-            target_time = spawn_time - ANNOUNCE_EARLY
+            alert_time = spawn_time - EARLY_TIME
+
+            remaining = alert_time - uptime
 
             if (
-                target_time <= uptime <
-                target_time + CHECK_INTERVAL
+                -15 <= remaining <= 15
                 and spawn_time not in
                 server_database[server_id]["rift_sent"]
             ):
@@ -335,13 +355,17 @@ async def server_tracker():
 
                 if channel:
 
+                    actual_spawn = spawn_time - uptime
+
                     await channel.send(
-                        f"🌀 **Rift spawning in 5 minutes**\n\n"
-                        f"⏱️ Current Server Age:\n"
-                        f"`{format_time(uptime)}`\n\n"
-                        f"🎯 Rift Spawn Time:\n"
-                        f"`{format_time(spawn_time)}`\n\n"
-                        f"🆔 `{server_id}`\n\n"
+                        f"🌀 **RIFT IN 5 MINUTES**\n\n"
+                        f"⏱️ Server Age: "
+                        f"`{format_time(uptime)}`\n"
+                        f"🎯 Rift Spawn At: "
+                        f"`{format_time(spawn_time)}`\n"
+                        f"⌛ Actual Spawn In: "
+                        f"`{format_time(actual_spawn)}`\n"
+                        f"🆔 `{server_id}`\n"
                         f"🔗 {join_link}"
                     )
 
@@ -350,8 +374,8 @@ async def server_tracker():
                 ].append(spawn_time)
 
                 print(
-                    f"[RIFT] {server_id} "
-                    f"{format_time(spawn_time)}"
+                    f"[RIFT ALERT] "
+                    f"{server_id}"
                 )
 
         # =================================================
@@ -360,11 +384,12 @@ async def server_tracker():
 
         for spawn_time in BOSS_TIMES:
 
-            target_time = spawn_time - ANNOUNCE_EARLY
+            alert_time = spawn_time - EARLY_TIME
+
+            remaining = alert_time - uptime
 
             if (
-                target_time <= uptime <
-                target_time + CHECK_INTERVAL
+                -15 <= remaining <= 15
                 and spawn_time not in
                 server_database[server_id]["boss_sent"]
             ):
@@ -375,13 +400,17 @@ async def server_tracker():
 
                 if channel:
 
+                    actual_spawn = spawn_time - uptime
+
                     await channel.send(
-                        f"👹 **Boss spawning in 5 minutes**\n\n"
-                        f"⏱️ Current Server Age:\n"
-                        f"`{format_time(uptime)}`\n\n"
-                        f"🎯 Boss Spawn Time:\n"
-                        f"`{format_time(spawn_time)}`\n\n"
-                        f"🆔 `{server_id}`\n\n"
+                        f"👹 **BOSS IN 5 MINUTES**\n\n"
+                        f"⏱️ Server Age: "
+                        f"`{format_time(uptime)}`\n"
+                        f"🎯 Boss Spawn At: "
+                        f"`{format_time(spawn_time)}`\n"
+                        f"⌛ Actual Spawn In: "
+                        f"`{format_time(actual_spawn)}`\n"
+                        f"🆔 `{server_id}`\n"
                         f"🔗 {join_link}"
                     )
 
@@ -390,9 +419,11 @@ async def server_tracker():
                 ].append(spawn_time)
 
                 print(
-                    f"[BOSS] {server_id} "
-                    f"{format_time(spawn_time)}"
+                    f"[BOSS ALERT] "
+                    f"{server_id}"
                 )
+
+        await asyncio.sleep(0.3)
 
     # =====================================================
     # REMOVE DEAD SERVERS
@@ -406,7 +437,7 @@ async def server_tracker():
 
             if (
                 current_time - data["last_seen"]
-                > CHECK_INTERVAL * 4
+                > 600
             ):
 
                 dead_servers.append(server_id)
@@ -424,9 +455,6 @@ async def server_tracker():
     for dead in dead_servers:
 
         if dead in server_database:
-
-            print(f"[REMOVED] {dead}")
-
             del server_database[dead]
 
     save_data()
@@ -436,12 +464,12 @@ async def server_tracker():
     )
 
 # =========================================================
-# COMMANDS
+# SLASH COMMANDS
 # =========================================================
 
 @bot.tree.command(
     name="ping",
-    description="Bot status"
+    description="Check bot status"
 )
 async def ping(interaction: discord.Interaction):
 
@@ -486,20 +514,24 @@ async def uptime(
     )
 
     await interaction.followup.send(
-        f"⏱️ Uptime:\n"
+        f"⏱️ Uptime: "
         f"`{format_time(uptime_seconds)}`"
     )
 
 # =========================================================
-# READY
+# READY EVENT
 # =========================================================
 
 @bot.event
 async def on_ready():
 
-    await bot.tree.sync()
-
     print(f"Logged in as {bot.user}")
+
+    try:
+        await bot.tree.sync()
+        print("Slash commands synced")
+    except Exception as e:
+        print("Sync Error:", e)
 
     if not server_tracker.is_running():
         server_tracker.start()
