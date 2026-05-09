@@ -33,7 +33,7 @@ ROBLOX_COOKIE = os.getenv("ROBLOX_COOKIE")
 
 PLACE_ID = 13358463560
 
-CHECK_INTERVAL = 20
+CHECK_INTERVAL = 25
 DATA_FILE = "servers.json"
 
 RIFT_CHANNEL_ID = 1502236122615648326
@@ -214,7 +214,7 @@ while boss <= MAX_SERVER_AGE:
 # =========================================================
 
 # 5 minutes before spawn
-ALERT_BEFORE = 180
+ALERT_BEFORE = 300
 
 # allow small timing window
 WINDOW = 5
