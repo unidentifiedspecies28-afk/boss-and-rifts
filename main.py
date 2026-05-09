@@ -1,84 +1,316 @@
 import discord
-from discord import app_commands
 from discord.ext import commands, tasks
+import aiohttp
+import asyncio
+import json
 import os
-import requests
-from datetime import datetime, timedelta
-from dotenv import load_dotenv
+import time
+from datetime import datetime
 
-# --------------------------
-# ✅ SETTINGS
-# --------------------------
-PLACE_ID = "13358463560"  
-BOSS_WEBHOOK = "YOUR_BOSS_WEBHOOK_URL"
-RIFT_WEBHOOK = "YOUR_RIFT_WEBHOOK_URL"
-MY_GUILD_ID = 1466002025241378947  # Your Server ID
+# =========================================================
+# CONFIG
+# =========================================================
 
-# BOSS = 2 hours (7200s) | RIFT = 1.5 hours (5400s)
-BOSS_CYCLE = 7200
-RIFT_CYCLE = 5400
-# --------------------------
+TOKEN = "DISCORD_TOKEN"
 
-load_dotenv()
+PLACE_ID = 13358463560
+CHECK_INTERVAL = 20
+DATA_FILE = "servers.json"
 
-class TesterBot(commands.Bot):
-    def __init__(self):
-        intents = discord.Intents.default()
-        super().__init__(command_prefix="!", intents=intents)
-        self.servers = {}
-        self.alerts_sent = {}
+# Separate channels
+RIFT_CHANNEL_ID = 1502236122615648326
+BOSS_CHANNEL_ID = 1502236106597470288
 
-    async def setup_hook(self):
-        guild = discord.Object(id=MY_GUILD_ID)
-        self.tree.copy_global_to(guild=guild)
-        await self.tree.sync(guild=guild)
-        self.scan_loop.start()
+# =========================================================
+# DISCORD SETUP
+# =========================================================
 
-    def get_roblox_data(self):
-        """This is the core scanner logic"""
-        cookie = os.getenv("ROBLOX_COOKIE")
-        # limit=50 is more stable than 100
-        url = f"https://games.roblox.com/v1/games/{PLACE_ID}/servers/Public?limit=50"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-            "Cookie": f".ROBLOSECURITY={cookie}" if cookie else ""
-        }
-        try:
-            r = requests.get(url, headers=headers, timeout=10)
-            return r.json()
-        except Exception as e:
-            return {"error": str(e)}
+intents = discord.Intents.default()
+bot = commands.Bot(command_prefix="!", intents=intents)
 
-    @tasks.loop(seconds=30)
-    async def scan_loop(self):
-        data = self.get_roblox_data()
-        if "data" in data:
-            now = datetime.utcnow()
-            for server in data["data"]:
-                sid = server["id"]
-                if sid not in self.servers:
-                    # Uptime calculation
-                    self.servers[sid] = now - timedelta(minutes=server.get("playing", 0))
-                    self.alerts_sent[sid] = []
-                
-                # Check for Boss/Rift warnings here (Logic from previous message)
+# =========================================================
+# STORAGE
+# =========================================================
 
-    @app_commands.command(name="test_now", description="Force a scan and report results")
-    async def test_now(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        data = self.get_roblox_data()
-        
-        if "data" in data:
-            count = len(data["data"])
-            msg = f"✅ Success! Found **{count}** active servers.\n"
-            if count > 0:
-                first_server = data["data"][0]
-                msg += f"First Server ID: `{first_server['id'][:10]}...`\n"
-                msg += f"Players: `{first_server['playing']}/{first_server['maxPlayers']}`"
-            await interaction.followup.send(msg)
+def load_data():
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "r") as f:
+            return json.load(f)
+    return {}
+
+def save_data():
+    with open(DATA_FILE, "w") as f:
+        json.dump(server_database, f, indent=4)
+
+server_database = load_data()
+
+# =========================================================
+# ROBLOX API
+# =========================================================
+
+BASE_URL = (
+    f"https://games.roblox.com/v1/games/"
+    f"{PLACE_ID}/servers/Public?limit=100"
+)
+
+async def fetch_servers():
+
+    servers = []
+    cursor = None
+
+    async with aiohttp.ClientSession() as session:
+
+        while True:
+
+            url = BASE_URL
+
+            if cursor:
+                url += f"&cursor={cursor}"
+
+            try:
+
+                async with session.get(url) as response:
+
+                    if response.status != 200:
+                        print(f"API Error: {response.status}")
+                        break
+
+                    data = await response.json()
+
+                    servers.extend(data.get("data", []))
+
+                    cursor = data.get("nextPageCursor")
+
+                    if not cursor:
+                        break
+
+                    await asyncio.sleep(0.15)
+
+            except Exception as e:
+                print("Fetch Error:", e)
+                break
+
+    return servers
+
+# =========================================================
+# TIME FORMAT
+# =========================================================
+
+def format_time(seconds):
+
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+
+    return f"{hours}h {minutes}m"
+
+# =========================================================
+# MILESTONES
+# =========================================================
+
+RIFT_MILESTONES = []
+BOSS_MILESTONES = []
+
+# Rifts every 1h 30m
+rift = 5400
+
+while rift <= 172800:
+    RIFT_MILESTONES.append(rift)
+    rift += 5400
+
+# Bosses every 2h
+boss = 7200
+
+while boss <= 172800:
+    BOSS_MILESTONES.append(boss)
+    boss += 7200
+
+# =========================================================
+# TRACKER
+# =========================================================
+
+@tasks.loop(seconds=CHECK_INTERVAL)
+async def server_tracker():
+
+    global server_database
+
+    current_time = int(time.time())
+
+    print(f"[{datetime.utcnow()}] Scanning servers...")
+
+    servers = await fetch_servers()
+
+    live_servers = set()
+
+    for server in servers:
+
+        server_id = server["id"]
+
+        live_servers.add(server_id)
+
+        # =================================================
+        # NEW SERVER
+        # =================================================
+
+        if server_id not in server_database:
+
+            server_database[server_id] = {
+                "first_seen": current_time,
+                "last_seen": current_time,
+                "rift_announced": [],
+                "boss_announced": []
+            }
+
+            print(f"[NEW SERVER] {server_id}")
+
         else:
-            error_msg = data.get("errors", [{}])[0].get("message", "Unknown Error")
-            await interaction.followup.send(f"❌ Failed! Roblox API said: `{error_msg}`\n(This usually means you need a valid ROBLOX_COOKIE)")
 
-bot = TesterBot()
-bot.run(os.getenv("DISCORD_TOKEN"))
+            server_database[server_id]["last_seen"] = current_time
+
+        # =================================================
+        # UPTIME
+        # =================================================
+
+        uptime = (
+            current_time
+            - server_database[server_id]["first_seen"]
+        )
+
+        join_link = (
+            f"https://www.roblox.com/games/start?"
+            f"placeId={PLACE_ID}"
+            f"&gameInstanceId={server_id}"
+        )
+
+        # =================================================
+        # RIFT ANNOUNCEMENTS
+        # =================================================
+
+        for milestone in RIFT_MILESTONES:
+
+            if (
+                uptime >= milestone
+                and milestone not in server_database[server_id]["rift_announced"]
+            ):
+
+                channel = bot.get_channel(RIFT_CHANNEL_ID)
+
+                if channel:
+
+                    await channel.send(
+                        f"🌀 **Rift Server Found**\n\n"
+                        f"⏱️ Uptime: `{format_time(milestone)}`\n"
+                        f"🆔 Server ID: `{server_id}`\n"
+                        f"🔗 Join:\n{join_link}"
+                    )
+
+                server_database[server_id]["rift_announced"].append(milestone)
+
+                print(
+                    f"[RIFT] {server_id} "
+                    f"{format_time(milestone)}"
+                )
+
+        # =================================================
+        # BOSS ANNOUNCEMENTS
+        # =================================================
+
+        for milestone in BOSS_MILESTONES:
+
+            if (
+                uptime >= milestone
+                and milestone not in server_database[server_id]["boss_announced"]
+            ):
+
+                channel = bot.get_channel(BOSS_CHANNEL_ID)
+
+                if channel:
+
+                    await channel.send(
+                        f"👹 **Boss Server Found**\n\n"
+                        f"⏱️ Uptime: `{format_time(milestone)}`\n"
+                        f"🆔 Server ID: `{server_id}`\n"
+                        f"🔗 Join:\n{join_link}"
+                    )
+
+                server_database[server_id]["boss_announced"].append(milestone)
+
+                print(
+                    f"[BOSS] {server_id} "
+                    f"{format_time(milestone)}"
+                )
+
+    # =====================================================
+    # REMOVE DEAD SERVERS
+    # =====================================================
+
+    dead_servers = []
+
+    for server_id, data in server_database.items():
+
+        if server_id not in live_servers:
+
+            if current_time - data["last_seen"] > CHECK_INTERVAL * 2:
+
+                uptime = (
+                    data["last_seen"]
+                    - data["first_seen"]
+                )
+
+                print(
+                    f"[CLOSED] {server_id} "
+                    f"after {format_time(uptime)}"
+                )
+
+                dead_servers.append(server_id)
+
+    for dead in dead_servers:
+        del server_database[dead]
+
+    save_data()
+
+    print(f"Tracking {len(live_servers)} live servers")
+
+# =========================================================
+# COMMANDS
+# =========================================================
+
+@bot.command()
+async def uptime(ctx, server_id: str):
+
+    if server_id not in server_database:
+        await ctx.send("Server not tracked.")
+        return
+
+    uptime = (
+        int(time.time())
+        - server_database[server_id]["first_seen"]
+    )
+
+    await ctx.send(
+        f"⏱️ Uptime: `{format_time(uptime)}`"
+    )
+
+@bot.command()
+async def tracked(ctx):
+
+    await ctx.send(
+        f"Tracking `{len(server_database)}` servers."
+    )
+
+# =========================================================
+# READY EVENT
+# =========================================================
+
+@bot.event
+async def on_ready():
+
+    print(f"Logged in as {bot.user}")
+
+    if not server_tracker.is_running():
+        server_tracker.start()
+
+# =========================================================
+# START BOT
+# =========================================================
+
+bot.run(TOKEN)
