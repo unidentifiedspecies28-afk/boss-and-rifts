@@ -37,6 +37,7 @@ CHECK_INTERVAL = 30
 
 DATA_FILE = "servers.json"
 
+# PUT YOUR CHANNEL IDS
 RIFT_CHANNEL_ID = 1502236122615648326
 BOSS_CHANNEL_ID = 1502236106597470288
 
@@ -132,7 +133,7 @@ async def fetch_servers():
     return servers
 
 # =========================================================
-# VERIFIED UPTIME
+# REAL UPTIME
 # =========================================================
 
 async def fetch_real_uptime(server_id):
@@ -143,107 +144,65 @@ async def fetch_real_uptime(server_id):
         "User-Agent": "Roblox/WinInet"
     }
 
-    valid_results = []
+    payload = {
+        "placeId": PLACE_ID,
+        "gameId": server_id,
+        "gameJoinAttemptId": str(uuid.uuid4())
+    }
 
-    for _ in range(5):
+    try:
 
-        payload = {
-            "placeId": PLACE_ID,
-            "gameId": server_id,
-            "gameJoinAttemptId": str(uuid.uuid4())
-        }
+        async with aiohttp.ClientSession() as session:
 
-        try:
+            async with session.post(
+                JOIN_URL,
+                headers=headers,
+                json=payload
+            ) as response:
 
-            async with aiohttp.ClientSession() as session:
+                if response.status != 200:
+                    return None
 
-                async with session.post(
-                    JOIN_URL,
-                    headers=headers,
-                    json=payload
-                ) as response:
+                data = await response.json()
 
-                    if response.status != 200:
-                        continue
+                returned_job_id = data.get(
+                    "jobId"
+                )
 
-                    data = await response.json()
+                # Reject redirects
+                if returned_job_id != server_id:
+                    return None
 
-                    returned_job_id = data.get(
-                        "jobId"
-                    )
+                join_script = data.get(
+                    "joinScript",
+                    {}
+                )
 
-                    # Reject redirects
-                    if returned_job_id != server_id:
-                        continue
+                claimed_time = join_script.get(
+                    "ServerClaimedTime"
+                )
 
-                    join_script = data.get(
-                        "joinScript",
-                        {}
-                    )
+                if not claimed_time:
+                    return None
 
-                    claimed_time = join_script.get(
-                        "ServerClaimedTime"
-                    )
+                current_ms = int(
+                    time.time() * 1000
+                )
 
-                    if not claimed_time:
-                        continue
+                uptime = (
+                    current_ms - claimed_time
+                ) // 1000
 
-                    current_ms = int(
-                        time.time() * 1000
-                    )
+                if uptime < 0:
+                    return None
 
-                    uptime = (
-                        current_ms - claimed_time
-                    ) // 1000
+                if uptime > MAX_SERVER_AGE:
+                    return None
 
-                    # Impossible values
-                    if uptime < 0:
-                        continue
+                return int(uptime)
 
-                    if uptime > MAX_SERVER_AGE:
-                        continue
-
-                    valid_results.append(
-                        int(uptime)
-                    )
-
-        except:
-            pass
-
-        await asyncio.sleep(0.25)
-
-    # =====================================================
-    # NO VALID RESULTS
-    # =====================================================
-
-    if len(valid_results) < 2:
+    except:
         return None
-
-    # =====================================================
-    # REMOVE OUTLIERS
-    # =====================================================
-
-    valid_results.sort()
-
-    median = valid_results[
-        len(valid_results) // 2
-    ]
-
-    filtered = []
-
-    for value in valid_results:
-
-        if abs(value - median) <= 180:
-            filtered.append(value)
-
-    if not filtered:
-        return None
-
-    final_uptime = int(
-        sum(filtered) / len(filtered)
-    )
-
-    return final_uptime
 
 # =========================================================
 # FORMAT TIME
@@ -334,19 +293,20 @@ async def server_tracker():
                 - data["last_check"]
             )
 
-            # Natural progression
-            data["uptime"] += elapsed
+            predicted_uptime = (
+                data["uptime"] + elapsed
+            )
 
             data["last_check"] = current_time
 
             # =================================================
-            # ONLY RESYNC EVERY 10 MINUTES
+            # ONLY VERIFY EVERY 30 MINUTES
             # =================================================
 
             if (
                 current_time
                 - data["last_real_check"]
-            ) >= 600:
+            ) >= 1800:
 
                 real_uptime = await fetch_real_uptime(
                     server_id
@@ -354,38 +314,29 @@ async def server_tracker():
 
                 if real_uptime is not None:
 
-                    predicted = data["uptime"]
-
                     difference = abs(
                         real_uptime
-                        - predicted
+                        - predicted_uptime
                     )
 
-                    # Small correction
-                    if difference <= 180:
+                    # ONLY ACCEPT VERY SMALL DIFFERENCES
 
-                        data["uptime"] = real_uptime
+                    if difference <= 60:
 
-                    # Medium correction
-                    elif difference <= 600:
+                        predicted_uptime = real_uptime
 
-                        data["uptime"] = int(
-                            (
-                                predicted
-                                + real_uptime
-                            ) / 2
-                        )
-
-                    # Huge difference:
-                    # ignore bad Roblox response
                     else:
 
                         print(
-                            f"[BAD DATA IGNORED] "
+                            f"[DESYNC IGNORED] "
                             f"{server_id}"
                         )
 
                 data["last_real_check"] = current_time
+
+            # LOCK UPTIME
+
+            data["uptime"] = predicted_uptime
 
             data["last_seen"] = current_time
 
@@ -426,7 +377,6 @@ async def server_tracker():
             and uptime < next_rift
         ):
 
-            # DUPLICATE PREVENTION
             unique_id = f"{server_id}_{next_rift}"
 
             if (
@@ -471,7 +421,6 @@ async def server_tracker():
             and uptime < next_boss
         ):
 
-            # DUPLICATE PREVENTION
             unique_id = f"{server_id}_{next_boss}"
 
             if (
