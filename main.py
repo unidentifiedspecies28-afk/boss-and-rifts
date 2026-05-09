@@ -37,9 +37,10 @@ CHECK_INTERVAL = 20
 
 DATA_FILE = "servers.json"
 
-# PUT YOUR CHANNEL IDS
 RIFT_CHANNEL_ID = 1502236122615648326
 BOSS_CHANNEL_ID = 1502236106597470288
+
+MAX_SERVER_AGE = 172800
 
 # =========================================================
 # DISCORD
@@ -86,7 +87,7 @@ JOIN_URL = (
 )
 
 # =========================================================
-# FETCH PUBLIC SERVERS
+# FETCH SERVERS
 # =========================================================
 
 async def fetch_servers():
@@ -108,11 +109,6 @@ async def fetch_servers():
                 async with session.get(url) as response:
 
                     if response.status != 200:
-
-                        print(
-                            f"Public API Error: {response.status}"
-                        )
-
                         break
 
                     data = await response.json()
@@ -130,18 +126,16 @@ async def fetch_servers():
 
                     await asyncio.sleep(0.15)
 
-            except Exception as e:
-
-                print("Fetch Error:", e)
+            except:
                 break
 
     return servers
 
 # =========================================================
-# REAL SERVER UPTIME
+# GET REAL UPTIME
 # =========================================================
 
-async def get_server_uptime(server_id):
+async def fetch_real_uptime(server_id):
 
     headers = {
         "Cookie": f".ROBLOSECURITY={ROBLOX_COOKIE}",
@@ -166,29 +160,16 @@ async def get_server_uptime(server_id):
             ) as response:
 
                 if response.status != 200:
-
-                    print(
-                        f"Join API Error: {response.status}"
-                    )
-
                     return None
 
                 data = await response.json()
 
-                # =================================================
-                # VERIFY SERVER MATCH
-                # =================================================
+                returned_job_id = data.get(
+                    "jobId"
+                )
 
-                returned_job_id = data.get("jobId")
-
+                # Reject mismatched servers
                 if returned_job_id != server_id:
-
-                    print(
-                        f"Server mismatch:"
-                        f" requested={server_id}"
-                        f" returned={returned_job_id}"
-                    )
-
                     return None
 
                 join_script = data.get(
@@ -201,30 +182,26 @@ async def get_server_uptime(server_id):
                 )
 
                 if not claimed_time:
-
-                    print(
-                        f"No ServerClaimedTime "
-                        f"for {server_id}"
-                    )
-
                     return None
 
                 current_ms = int(
                     time.time() * 1000
                 )
 
-                uptime_seconds = (
+                uptime = (
                     current_ms - claimed_time
                 ) // 1000
 
-                return int(uptime_seconds)
+                # Reject impossible uptime
+                if uptime < 0:
+                    return None
 
-    except Exception as e:
+                if uptime > MAX_SERVER_AGE:
+                    return None
 
-        print(
-            f"Uptime Fetch Error: {e}"
-        )
+                return int(uptime)
 
+    except:
         return None
 
 # =========================================================
@@ -239,7 +216,7 @@ def format_time(seconds):
     return f"{hours}h {minutes}m"
 
 # =========================================================
-# EVENT SYSTEM
+# EVENT SETTINGS
 # =========================================================
 
 RIFT_INTERVAL = 5400
@@ -247,8 +224,6 @@ RIFT_WARNING = 300
 
 BOSS_INTERVAL = 7200
 BOSS_WARNING = 300
-
-MAX_SERVER_AGE = 172800
 
 # =========================================================
 # TRACKER
@@ -273,36 +248,72 @@ async def server_tracker():
 
         live_server_ids.add(server_id)
 
-        uptime = await get_server_uptime(
-            server_id
-        )
-
-        if uptime is None:
-            continue
-
-        # Ignore old servers
-        if uptime > MAX_SERVER_AGE:
-            continue
-
         # =================================================
-        # DATABASE ENTRY
+        # CREATE ENTRY
         # =================================================
 
         if server_id not in server_database:
 
+            real_uptime = await fetch_real_uptime(
+                server_id
+            )
+
+            if real_uptime is None:
+                continue
+
             server_database[server_id] = {
+
+                "uptime": real_uptime,
+
+                "last_check": current_time,
+
                 "rift_sent": [],
+
                 "boss_sent": [],
+
                 "last_seen": current_time
             }
 
             print(
-                f"[NEW SERVER] {server_id}"
+                f"[NEW] {server_id}"
             )
 
-        server_database[server_id]["last_seen"] = (
-            current_time
-        )
+        else:
+
+            data = server_database[server_id]
+
+            elapsed = (
+                current_time
+                - data["last_check"]
+            )
+
+            # Natural uptime growth
+            data["uptime"] += elapsed
+
+            data["last_check"] = current_time
+
+            # Occasionally resync
+            if current_time % 300 < CHECK_INTERVAL:
+
+                real_uptime = await fetch_real_uptime(
+                    server_id
+                )
+
+                if real_uptime:
+
+                    difference = abs(
+                        real_uptime
+                        - data["uptime"]
+                    )
+
+                    # Only accept reasonable corrections
+                    if difference < 600:
+
+                        data["uptime"] = real_uptime
+
+            data["last_seen"] = current_time
+
+        uptime = server_database[server_id]["uptime"]
 
         join_link = (
             f"https://www.roblox.com/games/start?"
@@ -330,8 +341,8 @@ async def server_tracker():
         ):
 
             if (
-                next_rift not in
-                server_database[server_id]["rift_sent"]
+                next_rift
+                not in server_database[server_id]["rift_sent"]
             ):
 
                 channel = bot.get_channel(
@@ -354,13 +365,8 @@ async def server_tracker():
                         f"🔗 {join_link}"
                     )
 
-                server_database[server_id][
-                    "rift_sent"
-                ].append(next_rift)
-
-                print(
-                    f"[RIFT WARNING] "
-                    f"{server_id}"
+                server_database[server_id]["rift_sent"].append(
+                    next_rift
                 )
 
         # =================================================
@@ -383,8 +389,8 @@ async def server_tracker():
         ):
 
             if (
-                next_boss not in
-                server_database[server_id]["boss_sent"]
+                next_boss
+                not in server_database[server_id]["boss_sent"]
             ):
 
                 channel = bot.get_channel(
@@ -407,13 +413,8 @@ async def server_tracker():
                         f"🔗 {join_link}"
                     )
 
-                server_database[server_id][
-                    "boss_sent"
-                ].append(next_boss)
-
-                print(
-                    f"[BOSS WARNING] "
-                    f"{server_id}"
+                server_database[server_id]["boss_sent"].append(
+                    next_boss
                 )
 
     # =====================================================
@@ -424,41 +425,23 @@ async def server_tracker():
 
     for saved_server_id in server_database:
 
-        data = server_database[saved_server_id]
-
-        # Server no longer exists
         if saved_server_id not in live_server_ids:
 
-            if (
-                current_time
-                - data["last_seen"]
-            ) > (CHECK_INTERVAL * 2):
+            last_seen = server_database[
+                saved_server_id
+            ]["last_seen"]
 
-                print(
-                    f"Removing dead server "
-                    f"{saved_server_id}"
-                )
+            if (
+                current_time - last_seen
+            ) > (CHECK_INTERVAL * 2):
 
                 remove_list.append(
                     saved_server_id
                 )
 
-        # Cleanup old entries
-        elif (
-            current_time
-            - data["last_seen"]
-        ) > MAX_SERVER_AGE:
-
-            print(
-                f"Removing old server "
-                f"{saved_server_id}"
-            )
-
-            remove_list.append(
-                saved_server_id
-            )
-
     for dead in remove_list:
+
+        print(f"[REMOVED] {dead}")
 
         del server_database[dead]
 
@@ -489,9 +472,7 @@ async def on_ready():
 
     await bot.tree.sync()
 
-    print(
-        f"Logged in as {bot.user}"
-    )
+    print(f"Logged in as {bot.user}")
 
     if not server_tracker.is_running():
         server_tracker.start()
