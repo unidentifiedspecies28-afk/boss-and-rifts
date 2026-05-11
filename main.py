@@ -322,7 +322,6 @@ async def server_tracker():
         )
 
         desktop_link = (
-            f"[Join Exact Server]"
             f"(roblox://experiences/start?"
             f"placeId=13358463560"
             f"&gameInstanceId={server_id})"
