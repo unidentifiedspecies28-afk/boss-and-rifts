@@ -369,7 +369,7 @@ async def server_tracker():
                         f"⚠️ Rift In: "
                         f"`{format_time(remaining)}`\n"
                         f"🆔 `{server_id}`\n"
-                        f"🔗 (Recommended for Mobile) {join_link}"
+                        f"🔗 (Recommended for Mobile) {join_link}\n"
                         f"🔗 (Recommended for Desktop) {desktop_link}"
                     )
 
@@ -418,7 +418,7 @@ async def server_tracker():
                         f"⚠️ Boss In: "
                         f"`{format_time(remaining)}`\n"
                         f"🆔 `{server_id}`\n"
-                        f"🔗 (Recommended for Mobile) {join_link}"
+                        f"🔗 (Recommended for Mobile) {join_link}\n"
                         f"🔗 (Recommended for Desktop) {desktop_link}"
                     )
 
