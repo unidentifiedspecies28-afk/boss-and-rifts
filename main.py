@@ -316,15 +316,7 @@ async def server_tracker():
         uptime = server_database[server_id]["uptime"]
 
         join_link = (
-            f"https://www.roblox.com/games/start?"
-            f"placeId={PLACE_ID}"
-            f"&gameInstanceId={server_id}"
-        )
-
-        desktop_link = (
-            f"(roblox://experiences/start?"
-            f"placeId=13358463560"
-            f"&gameInstanceId={server_id})"
+            f"https://unidentifiedspecies28-afk.github.io/boss-and-rifts/?jobId={server_id}"
         )
 
         # =================================================
@@ -368,8 +360,7 @@ async def server_tracker():
                         f"⚠️ Rift In: "
                         f"`{format_time(remaining)}`\n"
                         f"🆔 `{server_id}`\n"
-                        f"🔗 (Recommended for Mobile) {join_link}\n"
-                        f"🔗 (Recommended for Desktop) {desktop_link}"
+                        f"🔗 [Join Server]({join_link})"
                     )
 
                 server_database[server_id]["rift_sent"].append(
@@ -417,8 +408,7 @@ async def server_tracker():
                         f"⚠️ Boss In: "
                         f"`{format_time(remaining)}`\n"
                         f"🆔 `{server_id}`\n"
-                        f"🔗 (Recommended for Mobile) {join_link}\n"
-                        f"🔗 (Recommended for Desktop) {desktop_link}"
+                        f"🔗 [Join Server]({join_link})"
                     )
 
                 server_database[server_id]["boss_sent"].append(
