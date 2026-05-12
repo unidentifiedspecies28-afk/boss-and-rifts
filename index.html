@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Joining Roblox...</title>
+</head>
+<body>
+    <p>Launching Roblox...</p>
+
+    <script>
+        const params = new URLSearchParams(window.location.search);
+
+        const jobId = params.get("jobId");
+
+        const placeId = "13358463560";
+
+        if (jobId) {
+            window.location.href =
+                `roblox://experiences/start?placeId=${placeId}&gameInstanceId=${jobId}`;
+        } else {
+            document.body.innerHTML = "Missing jobId";
+        }
+    </script>
+</body>
+</html>
